@@ -1,0 +1,25 @@
+{
+  "name": "User Counts",
+  "category": "Analytics",
+  "description": "Unique user/account counts per chain over a date range",
+  "gql": "query UserCounts($startDate: BigInt, $endDate: BigInt, $first: Int, $skip: Int) {\n  accounts(\n    first: $first\n    skip: $skip\n    where: { firstSeenAt_gte: $startDate, firstSeenAt_lte: $endDate }\n    orderBy: \"firstSeenAt\"\n    orderDirection: \"asc\"\n  ) {\n    id\n    chain\n    address\n    firstSeenAt\n  }\n}",
+  "result_path": "data.accounts",
+  "pagination_style": "offset",
+  "cursor_path": "",
+  "has_next_path": "",
+  "date_format": "unix_seconds",
+  "chain_mode": "filter",
+  "chain_var_name": "chain",
+  "chain_field": "chain",
+  "key_field": "id",
+  "variable_defs": [
+    { "name": "startDate", "type": "int", "label": "Start Date", "source": "global_start", "format": "unix_seconds" },
+    { "name": "endDate",   "type": "int", "label": "End Date",   "source": "global_end",   "format": "unix_seconds" },
+    { "name": "first",     "type": "int", "label": "Page size",  "source": "pagination_first", "default": 1000 },
+    { "name": "skip",      "type": "int", "label": "Skip",       "source": "pagination_skip",  "default": 0 }
+  ],
+  "field_meta": {
+    "firstSeenAt": { "label": "First Seen", "type": "unix_seconds" }
+  },
+  "is_builtin": 1
+}

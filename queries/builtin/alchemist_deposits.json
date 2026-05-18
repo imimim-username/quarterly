@@ -1,0 +1,26 @@
+{
+  "name": "Alchemist Deposits",
+  "category": "Alchemist",
+  "description": "All deposits into Alchemist v3 contracts, aggregated by chain",
+  "gql": "query AlchemistDeposits($startDate: BigInt, $endDate: BigInt, $first: Int, $skip: Int) {\n  alchemistDeposits(\n    first: $first\n    skip: $skip\n    where: { timestamp_gte: $startDate, timestamp_lte: $endDate }\n    orderBy: \"timestamp\"\n    orderDirection: \"asc\"\n  ) {\n    id\n    chain\n    alchemist\n    yieldToken\n    sender\n    amount\n    timestamp\n  }\n}",
+  "result_path": "data.alchemistDeposits",
+  "pagination_style": "offset",
+  "cursor_path": "",
+  "has_next_path": "",
+  "date_format": "unix_seconds",
+  "chain_mode": "filter",
+  "chain_var_name": "chain",
+  "chain_field": "chain",
+  "key_field": "id",
+  "variable_defs": [
+    { "name": "startDate", "type": "int", "label": "Start Date", "source": "global_start", "format": "unix_seconds" },
+    { "name": "endDate",   "type": "int", "label": "End Date",   "source": "global_end",   "format": "unix_seconds" },
+    { "name": "first",     "type": "int", "label": "Page size",  "source": "pagination_first", "default": 1000 },
+    { "name": "skip",      "type": "int", "label": "Skip",       "source": "pagination_skip",  "default": 0 }
+  ],
+  "field_meta": {
+    "amount":    { "label": "Amount",    "decimals": 18 },
+    "timestamp": { "label": "Time",      "type": "unix_seconds" }
+  },
+  "is_builtin": 1
+}

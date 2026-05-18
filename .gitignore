@@ -1,0 +1,8 @@
+node_modules/
+backend/data/quarterly.db
+backend/data/quarterly.db-wal
+backend/data/quarterly.db-shm
+frontend/dist/
+.env
+.env.local
+*.log

@@ -1,0 +1,27 @@
+{
+  "name": "MYT Deposits",
+  "category": "MYT",
+  "description": "All deposits into MYT wrapper contracts, aggregated by chain",
+  "gql": "query MYTDeposits($startDate: BigInt, $endDate: BigInt, $first: Int, $skip: Int) {\n  deposits(\n    first: $first\n    skip: $skip\n    where: { timestamp_gte: $startDate, timestamp_lte: $endDate }\n    orderBy: \"timestamp\"\n    orderDirection: \"asc\"\n  ) {\n    id\n    chain\n    contract\n    sender\n    assets\n    shares\n    timestamp\n  }\n}",
+  "result_path": "data.deposits",
+  "pagination_style": "offset",
+  "cursor_path": "",
+  "has_next_path": "",
+  "date_format": "unix_seconds",
+  "chain_mode": "filter",
+  "chain_var_name": "chain",
+  "chain_field": "chain",
+  "key_field": "id",
+  "variable_defs": [
+    { "name": "startDate", "type": "int", "label": "Start Date", "source": "global_start", "format": "unix_seconds" },
+    { "name": "endDate",   "type": "int", "label": "End Date",   "source": "global_end",   "format": "unix_seconds" },
+    { "name": "first",     "type": "int", "label": "Page size",  "source": "pagination_first", "default": 1000 },
+    { "name": "skip",      "type": "int", "label": "Skip",       "source": "pagination_skip",  "default": 0 }
+  ],
+  "field_meta": {
+    "assets":    { "label": "Assets",    "decimals": 18 },
+    "shares":    { "label": "Shares",    "decimals": 18 },
+    "timestamp": { "label": "Time",      "type": "unix_seconds" }
+  },
+  "is_builtin": 1
+}
