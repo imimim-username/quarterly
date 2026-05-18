@@ -297,7 +297,9 @@ CREATE TABLE runs (
     page_count      INTEGER NOT NULL DEFAULT 0,
     duration_ms     INTEGER NOT NULL DEFAULT 0,
     -- Error state
-    error_type      TEXT,           -- null | "network" | "graphql" | "timeout" | "size_limit"
+    error_type      TEXT,           -- null | "invalid_endpoint" | "invalid_query" | "network" |
+                                      --   "timeout" | "graphql" | "graphql_partial" |
+                                      --   "size_limit" | "page_limit" | "row_limit" | "path_error"
     error_message   TEXT,
     graphql_errors  TEXT,           -- JSON array of GraphQL error objects, if any
     -- Warnings
@@ -709,16 +711,22 @@ Flattening rules applied in order:
      const raw = BigInt(rawValue);
      const d = BigInt(decimals);
      const divisor = 10n ** d;
-     const intPart = raw / divisor;                          // truncated integer part
-     const fracRaw = (raw % divisor).toString()
+     const negative = raw < 0n;
+     const abs = negative ? -raw : raw;
+     const intPart = abs / divisor;
+     const fracRaw = (abs % divisor).toString()             // use abs to avoid sign on remainder
        .padStart(decimals, '0')                              // preserve leading zeros
        .replace(/0+$/, '');                                  // strip trailing zeros
-     return fracRaw.length > 0 ? `${intPart}.${fracRaw}` : `${intPart}`;
+     const magnitude = fracRaw.length > 0 ? `${intPart}.${fracRaw}` : `${intPart}`;
+     return negative ? `-${magnitude}` : magnitude;
    }
    ```
 
-   Example: `rawValue = "1500000000000000000"`, `decimals = 18` → `"1.5"` (not `"1"`).
-   Handles negative values correctly since `BigInt` preserves sign.
+   Examples:
+   - `("1500000000000000000", 18)` → `"1.5"` (not `"1"`)
+   - `("-500000000000000000", 18)` → `"-0.5"` (sign on whole result, not fractional part)
+   - `("-1", 18)` → `"-0.000000000000000001"` (JS BigInt `%` keeps sign on remainder,
+     hence the `abs` normalisation above)
 5. Timestamp formatting: when `field_meta[fieldName].type === "unix_seconds"`,
    value converted to ISO8601.
 6. Column order: key field first, then remaining columns in insertion order of
@@ -889,7 +897,7 @@ version as a new query) rather than overwriting the existing row.
 
 ### Phase 4 — Results Table + Chain Filter
 - `ResultsTable` with virtualisation (react-virtual), sort, client-side filter.
-- `ChainFilter` chip bar; auto-inferred from `chain` field in rows.
+- `ChainFilter` chip bar; auto-inferred from the field named by `chain_field` in rows.
 - Column order: key field first, then insertion order. Numeric fields scaled by
   `field_meta.decimals`.
 - **Done when:** MYT deposits shown in a table with correct WETH scaling, filterable
@@ -927,7 +935,7 @@ version as a new query) rather than overwriting the existing row.
 ### Phase 9 — Tests + Polish
 - All backend test files passing.
 - Error states: endpoint unreachable, GraphQL syntax error, timeout, size limit
-  exceeded (with "Save anyway" confirmation).
+  exceeded (auto-saved with warning banner; no confirmation step).
 - Loading spinners + "Cancel" button (AbortController; checks between pages).
 - Large result warning banner.
 - **Done when:** All tests pass; all error states display helpful messages; cancel
@@ -1044,7 +1052,8 @@ Unit tests for `export.js` (no HTTP — call functions directly):
 - `("1000000000000000000", 18)` → `"1"` (no trailing `.0`).
 - `("100", 18)` → `"0.0000000000000001"` (very small).
 - `("0", 18)` → `"0"`.
-- `("-500000000000000000", 18)` → `"-0.5"` (negative).
+- `("-500000000000000000", 18)` → `"-0.5"` (negative; abs used for fractional part).
+- `("-1", 18)` → `"-0.000000000000000001"` (tiny negative; validates abs normalisation).
 - `("1", 6)` → `"0.000001"` (leading zeros preserved).
 - Large value (> 10^30) → correct string (no floating-point precision loss).
 
