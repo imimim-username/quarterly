@@ -113,6 +113,53 @@ This validation runs in a shared middleware used by all routes that proxy to the
 - GraphQL query strings stored in `queries` table are never executed server-side as
   code — they are passed verbatim to the Ponder endpoint as a string value.
 
+### Malformed persisted JSON (defensive recovery)
+
+Despite validation on write, DB corruption, manual edits, or migration bugs could
+produce unparseable JSON in `rows`, `field_meta`, or `variable_defs`. The policy:
+
+- Every `JSON.parse()` call on data read from SQLite is wrapped in a try/catch.
+- On parse failure: return HTTP 500 with `{ "error": "invalid_persisted_json",
+  "message": "...", "id": <run_id or query_id> }`. Never let the error propagate
+  and crash the process.
+- Log the offending record ID and column name at `error` level.
+- The route handler continues serving other requests normally.
+- This recovery is not required for MVP but must be implemented before Phase 3
+  (when run rows are first stored and retrieved).
+
+### CSV formula injection
+
+Raw Ponder values that begin with `=`, `+`, `-`, or `@` can be interpreted as
+formulas by Excel and Google Sheets (CSV injection). Because this tool is
+localhost-only and developer-oriented, the risk is low but the mitigation is trivial:
+
+**Prefix any cell value whose first character is `=`, `+`, `-`, or `@` with a
+single quote `'` before writing the CSV field.** This is applied in `export.js`
+before `csv-stringify` serialises the value. The quote character is visible in
+the raw CSV but suppressed by spreadsheet apps.
+
+### Concurrency semantics (v1 policy)
+
+`better-sqlite3` is synchronous; all SQLite writes from a single Node process are
+naturally serialised by the JS event loop — no explicit locking is needed.
+
+For in-memory pagination state:
+
+- Multiple `POST /api/runs` requests may execute concurrently. Each maintains
+  its own isolated in-memory `all_rows` accumulation; there is no shared mutable
+  state between requests.
+- Report runs (`POST /api/reports/:id/run`) execute their queries sequentially
+  within the request; they do not prevent other concurrent single-query runs.
+- No global run queue is implemented in v1. If a user triggers multiple large
+  runs simultaneously, memory usage is additive. The 10 MB hard limit per run
+  bounds individual run memory; total memory is `concurrent_runs × 10 MB` in the
+  worst case. This is acceptable for a single-user local tool.
+- Cancellation (`AbortController`) is scoped per HTTP request; cancelling one
+  run does not affect others.
+
+**v1 intentionally aggregates full result sets in memory before persistence and
+export; streaming persistence is deferred to a future version.**
+
 ---
 
 ## Architecture
@@ -461,8 +508,16 @@ return all_rows, page_count
 > **Boundary notes:**
 > - `max_row_count` is checked **before** appending so the in-memory array never exceeds
 >   the configured limit. A partial page that would push past the limit is rejected entirely.
-> - `max_page_count` is checked **after** incrementing so `max_page_count = 50` allows
->   exactly 50 pages and aborts only when a 51st would be needed.
+> - `max_page_count` is checked **after** the fetch and after incrementing. This means
+>   page 51 (when limit = 50) **is fetched** before the abort fires. However, because the
+>   run is never persisted on abort, its rows are discarded and the client receives an
+>   error. The practical effect is the same as aborting before the fetch, but the wording
+>   "aborts only when a 51st would be needed" is inaccurate — replace with: "aborts
+>   immediately after fetching a page whose index exceeds the limit; rows from the
+>   violating page are discarded along with the entire run."
+> - To abort before fetching page N+1, move the `page_count` check to the top of the
+>   loop (before the fetch). Either placement is acceptable; the chosen placement must
+>   be consistent across offset and cursor loops and documented here.
 
 ### Cursor-based loop (`pagination_style = "cursor"`)
 
@@ -1029,7 +1084,7 @@ version as a new query) rather than overwriting the existing row.
 | Warn at result size | 1 MB | `settings.warn_bytes` | Auto-saved; `warnings` populated; UI banner |
 | Hard result size | 10 MB | `settings.max_bytes` | Abort; HTTP 413; not saved |
 | Run All: query failure | — | — | Continue to next query; status = "failed" |
-| Cancel (user) | — | — | AbortController; no partial save |
+| Cancel (user) | — | — | AbortController; no interrupted/incomplete run persisted (distinct from `graphql_partial`, which does save) |
 | Total wall-clock time | unbounded | — | Intentionally unbounded; max pages × per-page timeout provides an implicit ceiling (default 50 × 30 s = 25 min). Add `max_total_duration_ms` in a future migration if needed. |
 
 ---
