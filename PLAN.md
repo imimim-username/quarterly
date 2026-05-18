@@ -89,10 +89,13 @@ Return HTTP 400 with `{ error: "invalid_endpoint", message: "..." }` on rejectio
 This validation runs in a shared middleware used by all routes that proxy to the endpoint.
 
 ### Result size limits
-- **Warn** (return a `warnings` array) when aggregated result JSON exceeds 1 MB.
+- **Size measurement:** `Buffer.byteLength(JSON.stringify(rows), 'utf8')` — applied to
+  the normalized row array (after key-union normalization) before SQLite storage.
+  No compression; no pretty-print whitespace.
+- **Warn** (return a `warnings` array) when the measured size exceeds 1 MB.
   The result is still saved automatically; the UI shows a non-blocking warning banner.
   No user confirmation step — the user may delete large runs from history afterward.
-- **Abort and return HTTP 413** when aggregated result JSON exceeds 10 MB; the run
+- **Abort and return HTTP 413** when the measured size exceeds 10 MB; the run
   is not saved to SQLite.
 - These limits are configurable via `settings` (keys `warn_bytes`, `max_bytes`).
 
@@ -445,12 +448,15 @@ loop:
     if rows is not an array: abort with error "result_path did not resolve to array"
     all_rows += rows
     page_count++
-    if page_count >= max_page_count: abort with error "max_page_count exceeded"
-    if len(all_rows) >= max_row_count: abort with error "max_row_count exceeded"
+    if page_count > max_page_count: abort with error "max_page_count exceeded"
+    if len(all_rows) > max_row_count: abort with error "max_row_count exceeded"
     if len(rows) < first: break            // last page
     skip += first
 return all_rows, page_count
 ```
+
+> **Boundary note:** `>` (not `>=`) means `max_page_count = 50` allows exactly 50 pages
+> and only aborts if a 51st would be needed. Same logic applies to `max_row_count`.
 
 ### Cursor-based loop (`pagination_style = "cursor"`)
 
@@ -469,8 +475,8 @@ loop:
     cursor = get(response, cursor_path)
     all_rows += rows
     page_count++
-    if page_count >= max_page_count: abort
-    if len(all_rows) >= max_row_count: abort
+    if page_count > max_page_count: abort
+    if len(all_rows) > max_row_count: abort
     if not has_next: break
     after = cursor
 return all_rows, page_count
@@ -592,12 +598,24 @@ Failed runs are returned to the client but not persisted.
 - Row field values are **raw strings/numbers from Ponder** — no decimal scaling applied
   server-side. Scaling is applied by the CSV exporter and the frontend table using
   `field_meta`.
-- Row objects always have the same keys (first row's keys determine columns).
-  If a row is missing a key, the value is `null`.
+- **Key normalization (union of all keys):** Before persisting and before rendering,
+  compute the union of all keys across every row. Every row is padded with `null` for
+  any key it is missing. Extra keys appearing in later rows are **not** discarded.
+
+  ```
+  // Example input:
+  [ { "a": 1 }, { "a": 2, "b": 3 } ]
+  // After normalization:
+  [ { "a": 1, "b": null }, { "a": 2, "b": 3 } ]
+  ```
+
+  Normalization is applied server-side before the `rows` value is stored in SQLite,
+  so the stored result is already fully normalized. Clients do not need to normalize.
 
 ### `POST /api/reports/:id/run`
 
-Runs all queries in the report sequentially. Stops: **no** — continues on failure.
+Runs all queries in the report sequentially **in ascending `position` order**.
+Stops: **no** — continues on failure.
 All queries share the same `start_date`/`end_date` from the request body.
 
 Response: HTTP 200 with the `report_run` record including per-query status:
@@ -660,7 +678,8 @@ URL is validated by `validateEndpoint` middleware before the request is made.
   name used when injecting the chain into the query; `chain_field` is the *result-row*
   field used for client-side filtering. They may differ. Shows all chains as toggle chips.
 - **Table view** — virtualised (react-virtual) for rows > 500. Columns auto-inferred
-  from first row's keys. Column order: key field first, then alphabetical. User can
+  from the union of all rows' keys. Column order: key field first, then insertion order
+  of the first row (remaining new keys appended). User can
   drag to reorder (client-side only in v1). Numeric fields scaled using `field_meta`.
   Timestamps formatted as local datetime.
 - **Chart view** — Recharts. User selects X field, one or more Y fields, chart type.
@@ -677,6 +696,17 @@ URL is validated by `validateEndpoint` middleware before the request is made.
 - Delta column per numeric field: absolute diff + percentage change.
 - Rows present in one run but not the other highlighted in yellow.
 - Chart overlay mode: both runs as series on the same Recharts chart.
+
+**Key matching rules:**
+
+- Rows are matched across runs by their `key_field` value (strict string equality).
+- `key_field` values **must be unique within each run**. If duplicates are detected,
+  the first occurrence wins and subsequent duplicates are flagged with a yellow
+  "duplicate key" indicator in the UI. No silent data loss.
+- Rows with a `null` or missing `key_field` value are treated as **unmatched** —
+  they appear in the "only in run A" / "only in run B" sections highlighted in yellow,
+  not matched against each other.
+- Rows present in one run but absent in the other are shown with `—` in all delta cells.
 
 **Numeric field classification for delta columns:**
 
@@ -754,9 +784,17 @@ and returns the simplified type map:
 ```
 
 This is used in the Query Editor to:
-- Validate that `result_path` matches a field that exists.
-- Warn if fields referenced in `field_meta` don't exist in the schema.
+- **Basic path segment validation** — split `result_path` on `.` and check that the
+  first segment after `"data"` names a field on the root `Query` type. Deep traversal
+  through nested connection/list types is **not** attempted; only the top-level field
+  is checked. The validator shows a warning, not an error, so saving is never blocked.
+- Warn if field names in `field_meta` do not appear in the top-level result type
+  (best-effort; connection wrapper types may obscure nested fields).
 - Show autocomplete suggestions (v2).
+
+> **Scope note:** Full nested-path traversal through GraphQL list and connection types
+> is complex and not required in v1. Keep the implementation simple and document
+> that the check is advisory only.
 
 ---
 
@@ -936,7 +974,16 @@ version as a new query) rather than overwriting the existing row.
 - All backend test files passing.
 - Error states: endpoint unreachable, GraphQL syntax error, timeout, size limit
   exceeded (auto-saved with warning banner; no confirmation step).
-- Loading spinners + "Cancel" button (AbortController; checks between pages).
+- Loading spinners + "Cancel" button with the following full lifecycle:
+  1. Frontend calls `AbortController.abort()`, which cancels the active `fetch` to the
+     backend `/api/runs` endpoint immediately (mid-page if a fetch is in flight).
+  2. The backend detects the aborted request (`req.signal.aborted` / `close` event)
+     and aborts the outbound `node-fetch` to the Ponder endpoint via its own
+     `AbortController`.
+  3. All in-memory rows accumulated so far are discarded.
+  4. No run row is written to SQLite.
+  5. The API returns HTTP 200 with `{ "cancelled": true, "rows": null, "row_count": 0 }`.
+  6. The frontend shows "Cancelled" state; no error banner.
 - Large result warning banner.
 - **Done when:** All tests pass; all error states display helpful messages; cancel
   works mid-pagination.
@@ -951,7 +998,7 @@ version as a new query) rather than overwriting the existing row.
 | Per-page timeout | 30 s | `settings.timeout_per_page_ms` | Abort; `error_type: "timeout"` |
 | Total max pages | 50 | `settings.max_page_count` | Abort; `error_type: "page_limit"` |
 | Total max rows | 50,000 | `settings.max_row_count` | Abort; `error_type: "row_limit"` |
-| Warn at result size | 1 MB | `settings.warn_bytes` | Save anyway; `warnings` populated; UI banner |
+| Warn at result size | 1 MB | `settings.warn_bytes` | Auto-saved; `warnings` populated; UI banner |
 | Hard result size | 10 MB | `settings.max_bytes` | Abort; HTTP 413; not saved |
 | Run All: query failure | — | — | Continue to next query; status = "failed" |
 | Cancel (user) | — | — | AbortController; no partial save |
