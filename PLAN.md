@@ -75,15 +75,31 @@ Before proxying any request to a user-supplied endpoint:
 5. Reject URLs with credentials (`user:pass@host`).
 6. Reject URLs with ports in a configurable blocklist (default: 22, 25, 465, 587).
 
+**DNS rebinding protection (required):** Checking only the hostname string is
+insufficient — a hostname like `evil.example.com` could resolve to a private IP.
+
+7. For any non-loopback hostname, resolve it with `dns.promises.lookup()` **before**
+   making the request. Apply ipaddr.js private-range checks to all resolved IPs.
+   If DNS resolution fails or the resolved IP falls in a blocked range, return 400.
+8. **Disable redirect following** (set `redirect: 'error'` in node-fetch, or
+   equivalent). If a redirect must be followed, re-validate the redirect `Location`
+   URL through steps 1–7 before following it.
+
 Return HTTP 400 with `{ error: "invalid_endpoint", message: "..." }` on rejection.
 This validation runs in a shared middleware used by all routes that proxy to the endpoint.
 
 ### Result size limits
 - **Warn** (return a `warnings` array) when aggregated result JSON exceeds 1 MB.
-- **Abort and return HTTP 413** when aggregated result JSON exceeds 10 MB.
+  The result is still saved automatically; the UI shows a non-blocking warning banner.
+  No user confirmation step — the user may delete large runs from history afterward.
+- **Abort and return HTTP 413** when aggregated result JSON exceeds 10 MB; the run
+  is not saved to SQLite.
 - These limits are configurable via `settings` (keys `warn_bytes`, `max_bytes`).
-- The UI must display the warning before auto-saving large runs, giving the user a
-  "Save anyway" confirmation.
+
+> **Rationale:** A "Save anyway" confirmation implies a two-step API (dry-run then
+> save), which would require either re-executing the query or server-side result
+> caching. For a local-only reporting tool the simpler contract — always save
+> successful sub-10 MB runs, surface size as a warning only — is preferable.
 
 ### Other
 - All SQLite queries use parameterised statements (never string interpolation).
@@ -231,8 +247,9 @@ CREATE TABLE settings (
     value TEXT NOT NULL
 );
 -- Keys: endpoint, warn_bytes (default 1048576), max_bytes (default 10485760),
---       max_page_count (default 50), max_row_count (default 50000),
---       timeout_per_page_ms (default 30000), builtin_imported (0/1)
+--       page_size (default 1000), max_page_count (default 50),
+--       max_row_count (default 50000), timeout_per_page_ms (default 30000),
+--       builtin_imported (0/1)
 
 CREATE TABLE queries (
     id              INTEGER PRIMARY KEY,
@@ -251,7 +268,10 @@ CREATE TABLE queries (
     date_format     TEXT    NOT NULL DEFAULT 'unix_seconds', -- "unix_seconds"|"unix_ms"|"iso8601"
     -- Chain config
     chain_mode      TEXT    NOT NULL DEFAULT 'filter', -- "variable"|"filter"|"none"
-    chain_var_name  TEXT    NOT NULL DEFAULT 'chain',  -- GraphQL variable name if chain_mode=variable
+    chain_var_name  TEXT    NOT NULL DEFAULT 'chain',  -- GraphQL variable name (chain_mode=variable)
+    chain_field     TEXT    NOT NULL DEFAULT 'chain',  -- result-row field used to identify the chain
+                                                        -- for client-side filtering (may differ from
+                                                        -- chain_var_name)
     -- Field display metadata: JSON object { fieldName: FieldMeta }
     field_meta      TEXT    NOT NULL DEFAULT '{}',
     -- Key field for comparison (e.g. "id" or "chain")
@@ -268,7 +288,9 @@ CREATE TABLE runs (
     endpoint        TEXT    NOT NULL,
     start_date      TEXT,           -- ISO8601 UTC; null if query has no date vars
     end_date        TEXT,           -- ISO8601 UTC
-    variables_sent  TEXT    NOT NULL, -- exact JSON sent to GraphQL endpoint
+    variables_base  TEXT    NOT NULL, -- user-controlled variables (dates + user vars)
+                                      -- excluding pagination state (first/skip/after).
+                                      -- Pagination is captured by page_count.
     -- Result
     rows            TEXT,           -- JSON array of row objects; null on error
     row_count       INTEGER NOT NULL DEFAULT 0,
@@ -408,7 +430,7 @@ Each query definition stores:
 ### Offset-based loop (`pagination_style = "offset"`)
 
 Variable names injected by the pagination engine:
-- `first` (page size, from settings `page_size`, default 1000)
+- `first` (page size, from `settings.page_size`, default 1000)
 - `skip` (current offset, starts at 0)
 
 ```
@@ -431,7 +453,7 @@ return all_rows, page_count
 ### Cursor-based loop (`pagination_style = "cursor"`)
 
 Variable names injected:
-- `first` (page size)
+- `first` (page size, from `settings.page_size`)
 - `after` (cursor string, starts as `null`)
 
 ```
@@ -513,7 +535,7 @@ Success response (HTTP 200):
   "endpoint": "https://...",
   "start_date": "2026-01-01T00:00:00Z",
   "end_date": "2026-04-01T00:00:00Z",
-  "variables_sent": { "startDate": 1735689600, "endDate": 1743465600, "first": 1000, "skip": 0 },
+  "variables_base": { "startDate": 1735689600, "endDate": 1743465600 },
   "rows": [ { "id": "...", "chain": "optimism", "assets": "1000000000000000000", ... } ],
   "row_count": 847,
   "page_count": 1,
@@ -525,6 +547,10 @@ Success response (HTTP 200):
   "ran_at": "2026-05-18T20:00:00.000Z"
 }
 ```
+
+> **Note on `graphql_partial`:** Returning HTTP 200 (not 207) for partial data avoids
+> surprising fetch/axios error handling in clients that treat non-2xx as failures.
+> The `error_type` field reliably distinguishes the case.
 
 Error response (HTTP 400/502/504/413):
 ```json
@@ -549,7 +575,7 @@ Error types:
 | `"network"` | 502 | Could not reach endpoint |
 | `"timeout"` | 504 | Per-page or total timeout exceeded |
 | `"graphql"` | 400 | GraphQL `errors` array returned, no `data` |
-| `"graphql_partial"` | 207 | GraphQL returned both `data` and `errors` |
+| `"graphql_partial"` | 200 | GraphQL returned both `data` and `errors`; partial rows saved |
 | `"size_limit"` | 413 | Result exceeded `max_bytes` |
 | `"page_limit"` | 422 | Exceeded `max_page_count` |
 | `"row_limit"` | 422 | Exceeded `max_row_count` |
@@ -627,8 +653,10 @@ URL is validated by `validateEndpoint` middleware before the request is made.
 
 **Results tab:**
 - **Warning banner** if `warnings` is non-empty (e.g. large result size).
-- **Chain filter bar** — auto-inferred from unique values in the `chain` field (or the
-  field named in `chain_var_name`). Shows all chains as toggle chips.
+- **Chain filter bar** — auto-inferred from unique values in the row field named by
+  `chain_field` (default `"chain"`). Note: `chain_var_name` is the *GraphQL variable*
+  name used when injecting the chain into the query; `chain_field` is the *result-row*
+  field used for client-side filtering. They may differ. Shows all chains as toggle chips.
 - **Table view** — virtualised (react-virtual) for rows > 500. Columns auto-inferred
   from first row's keys. Column order: key field first, then alphabetical. User can
   drag to reorder (client-side only in v1). Numeric fields scaled using `field_meta`.
@@ -648,6 +676,21 @@ URL is validated by `validateEndpoint` middleware before the request is made.
 - Rows present in one run but not the other highlighted in yellow.
 - Chart overlay mode: both runs as series on the same Recharts chart.
 
+**Numeric field classification for delta columns:**
+
+Raw Ponder values may be strings, BigInt-like strings, already-scaled display values,
+timestamps, or opaque IDs. A field is treated as numeric for delta purposes only if
+**both** of the following are true:
+
+1. It has `decimals` set in `field_meta` (explicitly declared as a scaled integer), **or**
+   both run values for that field parse as `Number.isFinite(parseFloat(v))` and are not
+   so large that `parseFloat` loses precision (i.e. value ≤ `Number.MAX_SAFE_INTEGER`).
+2. The field's `field_meta` does not have `type: "unix_seconds"`, `type: "unix_ms"`,
+   `type: "iso8601"`, or `type: "id"`.
+
+If a field does not meet both criteria, the delta cell shows `—`. This prevents
+nonsensical arithmetic on transaction hashes, addresses, or timestamps.
+
 ---
 
 ## CSV Flattening (`export.js`)
@@ -658,8 +701,24 @@ Flattening rules applied in order:
    Recursed to depth 3; deeper objects serialised as JSON string.
 3. Top-level array → one CSV row per element; parent scalars repeated.
 4. Decimal scaling: only applied when `field_meta[fieldName].decimals` is set.
-   `scaled = BigInt(rawValue) / 10n ** BigInt(decimals)` using BigInt arithmetic.
-   Result formatted as a decimal string with full precision.
+   **Must not use integer division** (`BigInt / BigInt` truncates the fractional part).
+   Use the following exact helper:
+
+   ```js
+   function scaledDecimal(rawValue, decimals) {
+     const raw = BigInt(rawValue);
+     const d = BigInt(decimals);
+     const divisor = 10n ** d;
+     const intPart = raw / divisor;                          // truncated integer part
+     const fracRaw = (raw % divisor).toString()
+       .padStart(decimals, '0')                              // preserve leading zeros
+       .replace(/0+$/, '');                                  // strip trailing zeros
+     return fracRaw.length > 0 ? `${intPart}.${fracRaw}` : `${intPart}`;
+   }
+   ```
+
+   Example: `rawValue = "1500000000000000000"`, `decimals = 18` → `"1.5"` (not `"1"`).
+   Handles negative values correctly since `BigInt` preserves sign.
 5. Timestamp formatting: when `field_meta[fieldName].type === "unix_seconds"`,
    value converted to ISO8601.
 6. Column order: key field first, then remaining columns in insertion order of
@@ -880,13 +939,137 @@ version as a new query) rather than overwriting the existing row.
 
 | Limit | Default | Configurable | Behaviour when exceeded |
 |---|---|---|---|
+| Page size | 1,000 rows | `settings.page_size` | n/a (just a param) |
 | Per-page timeout | 30 s | `settings.timeout_per_page_ms` | Abort; `error_type: "timeout"` |
 | Total max pages | 50 | `settings.max_page_count` | Abort; `error_type: "page_limit"` |
 | Total max rows | 50,000 | `settings.max_row_count` | Abort; `error_type: "row_limit"` |
-| Warn at result size | 1 MB | `settings.warn_bytes` | Continue; `warnings` populated; UI banner |
-| Hard result size | 10 MB | `settings.max_bytes` | Abort; HTTP 413 |
+| Warn at result size | 1 MB | `settings.warn_bytes` | Save anyway; `warnings` populated; UI banner |
+| Hard result size | 10 MB | `settings.max_bytes` | Abort; HTTP 413; not saved |
 | Run All: query failure | — | — | Continue to next query; status = "failed" |
 | Cancel (user) | — | — | AbortController; no partial save |
+
+---
+
+## Testing
+
+All backend tests use **Jest + Supertest**. Tests live in `backend/tests/`.
+Run with `npm test` from the root workspace.
+
+### `validateEndpoint.test.js`
+
+Tests for `middleware/validateEndpoint.js`:
+
+| # | Input | Expected |
+|---|---|---|
+| 1 | `http://127.0.0.1:8790` | Pass (loopback HTTP) |
+| 2 | `http://localhost:4000` | Pass (loopback HTTP) |
+| 3 | `http://192.168.1.1` | 400 `invalid_endpoint` |
+| 4 | `http://10.0.0.1` | 400 (private HTTP, not loopback) |
+| 5 | `https://api.example.com` | Pass (public HTTPS) |
+| 6 | `https://10.0.0.1` | 400 (private HTTPS) |
+| 7 | `https://172.16.5.5` | 400 |
+| 8 | `https://192.168.0.1` | 400 |
+| 9 | `https://169.254.1.1` | 400 (link-local) |
+| 10 | `ftp://example.com` | 400 (bad scheme) |
+| 11 | `https://user:pass@example.com` | 400 (credentials in URL) |
+| 12 | `https://example.com:22` | 400 (blocked port) |
+| 13 | `not-a-url` | 400 (parse failure) |
+| 14 | Hostname resolving to private IP | 400 (DNS rebinding) |
+
+The DNS rebinding test mocks `dns.promises.lookup` to return `10.0.0.1` for an
+otherwise-valid hostname.
+
+### `ponder.test.js`
+
+Tests for `ponder.js` pagination logic. Uses a mock HTTP server (nock or MSW).
+
+| # | Scenario | Expected |
+|---|---|---|
+| 1 | Offset: 2500 rows at page_size 1000 | 3 pages, 2500 rows |
+| 2 | Offset: exactly 1000 rows (one full page) | 2 pages (second returns 0), 1000 rows |
+| 3 | Offset: 0 rows (empty result) | 1 page, 0 rows |
+| 4 | Cursor: 3 pages, hasNextPage true/true/false | 3 pages, all rows concatenated |
+| 5 | `result_path` resolves to non-array | Throws `path_error`; no rows |
+| 6 | `result_path` missing in response | Throws `path_error` |
+| 7 | `max_page_count` = 2, 3 pages available | Throws `page_limit` after page 2 |
+| 8 | `max_row_count` = 1500, 2000 rows | Throws `row_limit` after crossing threshold |
+| 9 | Network timeout on page 2 | Throws `timeout`; partial rows NOT returned |
+| 10 | GraphQL `errors` array, no `data` | Throws `graphql` |
+| 11 | GraphQL both `data` and `errors` | Returns rows with `error_type: "graphql_partial"` |
+| 12 | Response size > warn_bytes (1 MB) | Returns rows + `warnings` entry |
+| 13 | Response size > max_bytes (10 MB) | Throws `size_limit` |
+| 14 | `pagination_style: "none"` | Single request; no first/skip injected |
+| 15 | variables_base excludes first/skip/after | Verified on captured request body |
+
+### `queries.test.js`
+
+Tests for `routes/queries.js` via Supertest:
+
+- `GET /api/queries` returns empty array on fresh DB.
+- `POST /api/queries` creates a query; missing `result_path` returns 400.
+- `PUT /api/queries/:id` updates `gql`, `field_meta`, etc.
+- `DELETE /api/queries/:id` cascades to runs.
+- `POST /api/queries/import` with `is_builtin=1`: re-import does not overwrite existing row.
+- `POST /api/queries/import` with `is_builtin=0`: re-import updates existing row.
+- Creating a query with `pagination_style: "cursor"` and empty `cursor_path` returns 400.
+
+### `runs.test.js`
+
+Tests for `routes/runs.js` via Supertest (mock Ponder server):
+
+- `POST /api/runs` with valid query → 200, run saved to DB, `rows` non-null.
+- `POST /api/runs` with invalid `query_id` → 400 `invalid_query`.
+- `POST /api/runs` when endpoint unreachable → 502 `network`, run not saved.
+- `POST /api/runs` when GraphQL returns errors-only → 400 `graphql`, run not saved.
+- `POST /api/runs` when result is 1.5 MB → 200, run saved, `warnings` non-empty.
+- `POST /api/runs` when result is 11 MB → 413 `size_limit`, run not saved.
+- `GET /api/runs?query_id=N` returns runs newest-first.
+- `GET /api/runs/:id` includes `rows` array.
+- `DELETE /api/runs/:id` removes from DB; subsequent GET returns 404.
+- `variables_base` stored in run record excludes pagination variables.
+
+### `export.test.js`
+
+Unit tests for `export.js` (no HTTP — call functions directly):
+
+**CSV flattening:**
+- Flat row: all scalars appear as columns.
+- Nested object: `token.symbol` → column `token_symbol`; depth > 3 → JSON string.
+- Nested array: produces multiple CSV rows; parent scalars repeated.
+- Missing key in some rows → empty cell (no error).
+- Column order: key field first, then insertion order of first row.
+
+**Decimal scaling (`scaledDecimal`):**
+- `("1500000000000000000", 18)` → `"1.5"`.
+- `("1000000000000000000", 18)` → `"1"` (no trailing `.0`).
+- `("100", 18)` → `"0.0000000000000001"` (very small).
+- `("0", 18)` → `"0"`.
+- `("-500000000000000000", 18)` → `"-0.5"` (negative).
+- `("1", 6)` → `"0.000001"` (leading zeros preserved).
+- Large value (> 10^30) → correct string (no floating-point precision loss).
+
+**Timestamp formatting:**
+- `field_meta.type = "unix_seconds"` converts to ISO8601.
+- Fields without `type` are left as-is.
+
+### `settings.test.js`
+
+- `GET /api/settings` returns all default keys.
+- `PUT /api/settings` with valid key updates value.
+- `PUT /api/settings` with unknown key returns 400.
+- `GET /api/settings/ping` with valid endpoint and mock server returns `{ ok: true, latency_ms: N }`.
+- `GET /api/settings/ping` with blocked endpoint returns `{ ok: false, error: "invalid_endpoint" }`.
+
+### CompareView numeric normalization (frontend unit test — Vitest)
+
+`src/components/CompareView.test.jsx`:
+
+- Field with `decimals: 18` in `field_meta` → classified numeric.
+- Field with `type: "unix_seconds"` in `field_meta` → not numeric; delta = `—`.
+- Field value `"0xabc..."` (address string) that fails `parseFloat` → not numeric.
+- Field value `"12345"` with no `field_meta` → numeric (parses as finite decimal).
+- BigInt-string > `MAX_SAFE_INTEGER` with `decimals` set → numeric (scaled before compare).
+- Row in run A but not run B → highlighted row; delta = `—`.
 
 ---
 
