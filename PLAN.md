@@ -280,10 +280,19 @@ quarterly/
 
 ### Migration system
 
-`db.js` maintains a `schema_version` table. On startup it reads the current version,
-finds all migration files in `migrations/` with a higher number, and applies them in
-order inside a transaction. Migrations are never re-run. Schema version is incremented
-atomically after each successful migration.
+`db.js` maintains a `schema_version` table. On startup it:
+
+1. Enables WAL journaling mode before any other operation:
+   ```js
+   db.pragma('journal_mode = WAL');
+   ```
+   WAL allows concurrent reads during writes, which matters when the user browses
+   old run history while a large report is executing. Without WAL, SQLite takes a
+   full write lock that blocks reads for the duration of the write.
+
+2. Reads the current schema version, finds all migration files in `migrations/` with
+   a higher number, and applies them in order inside a transaction. Migrations are
+   never re-run. Schema version is incremented atomically after each successful migration.
 
 ```sql
 CREATE TABLE schema_version (
@@ -345,7 +354,15 @@ CREATE TABLE runs (
                                       -- excluding pagination state (first/skip/after).
                                       -- Pagination is captured by page_count.
     -- Result
-    rows            TEXT,           -- JSON array of row objects; null on error
+    rows            TEXT,           -- JSON array of row objects; null on error.
+                                      -- v1 stores the full normalized payload as a
+                                      -- single TEXT blob. Trade-offs accepted:
+                                      --   • full parse/stringify on every read/write
+                                      --   • no partial retrieval or SQL-level queryability
+                                      --   • no compression
+                                      -- Future evolution if cross-run analytics or diffs
+                                      -- are needed: compressed blobs (zlib), or a
+                                      -- normalised run_rows table. Deferred to v2.
     row_count       INTEGER NOT NULL DEFAULT 0,
     page_count      INTEGER NOT NULL DEFAULT 0,
     duration_ms     INTEGER NOT NULL DEFAULT 0,
