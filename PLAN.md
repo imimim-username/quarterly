@@ -78,9 +78,12 @@ Before proxying any request to a user-supplied endpoint:
 **DNS rebinding protection (required):** Checking only the hostname string is
 insufficient — a hostname like `evil.example.com` could resolve to a private IP.
 
-7. For any non-loopback hostname, resolve it with `dns.promises.lookup()` **before**
-   making the request. Apply ipaddr.js private-range checks to all resolved IPs.
-   If DNS resolution fails or the resolved IP falls in a blocked range, return 400.
+7. For any non-loopback hostname, resolve it with `dns.promises.lookup(hostname, { all: true })`
+   **before** making the request. This returns all address records (A + AAAA). Apply
+   ipaddr.js private-range checks to **every** resolved address — if any one falls in a
+   blocked range, reject the entire request. If DNS resolution fails, return 400.
+   (`{ all: true }` is required; the default single-record form could miss a private
+   address on a dual-stack host.)
 8. **Disable redirect following** (set `redirect: 'error'` in node-fetch, or
    equivalent). If a redirect must be followed, re-validate the redirect `Location`
    URL through steps 1–7 before following it.
@@ -446,17 +449,20 @@ loop:
     send query with { first, skip, ...user_vars }
     rows = get(response, result_path)      // exact dotted path, no guessing
     if rows is not an array: abort with error "result_path did not resolve to array"
+    if len(all_rows) + len(rows) > max_row_count: abort with error "max_row_count exceeded"
     all_rows += rows
     page_count++
     if page_count > max_page_count: abort with error "max_page_count exceeded"
-    if len(all_rows) > max_row_count: abort with error "max_row_count exceeded"
     if len(rows) < first: break            // last page
     skip += first
 return all_rows, page_count
 ```
 
-> **Boundary note:** `>` (not `>=`) means `max_page_count = 50` allows exactly 50 pages
-> and only aborts if a 51st would be needed. Same logic applies to `max_row_count`.
+> **Boundary notes:**
+> - `max_row_count` is checked **before** appending so the in-memory array never exceeds
+>   the configured limit. A partial page that would push past the limit is rejected entirely.
+> - `max_page_count` is checked **after** incrementing so `max_page_count = 50` allows
+>   exactly 50 pages and aborts only when a 51st would be needed.
 
 ### Cursor-based loop (`pagination_style = "cursor"`)
 
@@ -473,10 +479,10 @@ loop:
     rows = get(response, result_path)
     has_next = get(response, has_next_path)
     cursor = get(response, cursor_path)
+    if len(all_rows) + len(rows) > max_row_count: abort
     all_rows += rows
     page_count++
     if page_count > max_page_count: abort
-    if len(all_rows) > max_row_count: abort
     if not has_next: break
     after = cursor
 return all_rows, page_count
@@ -496,6 +502,21 @@ not injected.
 - `max_page_count` = 2, 3 pages available → error after page 2.
 - Network timeout on page 2 → error, partial rows NOT saved.
 - GraphQL errors array in response alongside data → handled per error policy below.
+- `max_row_count` check before append: 49,500 rows + 1,000-row page → abort (exact cap).
+
+### `graphql_partial` page semantics
+
+If **any page** during pagination returns a GraphQL response with both `data` and
+`errors`:
+
+1. Rows from that partial page **are included** in `all_rows`.
+2. The page's `errors` array is appended to an accumulated `graphql_errors` list.
+3. **Pagination stops immediately** — no further pages are fetched.
+4. The run is saved with `error_type: "graphql_partial"` and all accumulated rows.
+
+This is intentionally conservative: stop at the first sign of partial data rather than
+continuing and accumulating unknown errors. Developers must not silently continue past
+a partial page.
 
 ---
 
@@ -732,6 +753,10 @@ Flattening rules applied in order:
 2. Top-level object → dot-notation columns (e.g. `token.symbol` → `token_symbol`).
    Recursed to depth 3; deeper objects serialised as JSON string.
 3. Top-level array → one CSV row per element; parent scalars repeated.
+   **⚠ Multiplicative expansion:** if rows contain nested arrays (e.g. 10k rows each
+   with 100 events), flattening produces up to 1M CSV rows — far more than `row_count`.
+   CSV export is applied after pagination limits, which bound result rows but not the
+   final CSV size. This is intentional; document it to users on the export button.
 4. Decimal scaling: only applied when `field_meta[fieldName].decimals` is set.
    **Must not use integer division** (`BigInt / BigInt` truncates the fractional part).
    Use the following exact helper:
@@ -759,8 +784,8 @@ Flattening rules applied in order:
      hence the `abs` normalisation above)
 5. Timestamp formatting: when `field_meta[fieldName].type === "unix_seconds"`,
    value converted to ISO8601.
-6. Column order: key field first, then remaining columns in insertion order of
-   the first result row.
+6. Column order: key field first, then insertion order of the first result row;
+   keys appearing only in later rows appended in first-seen order.
 
 Tested independently in `export.test.js` with:
 - Nested objects; nested arrays; mixed.
@@ -974,7 +999,7 @@ version as a new query) rather than overwriting the existing row.
 - All backend test files passing.
 - Error states: endpoint unreachable, GraphQL syntax error, timeout, size limit
   exceeded (auto-saved with warning banner; no confirmation step).
-- Loading spinners + "Cancel" button with the following full lifecycle:
+- Loading spinners + "Cancel" button with the following lifecycle:
   1. Frontend calls `AbortController.abort()`, which cancels the active `fetch` to the
      backend `/api/runs` endpoint immediately (mid-page if a fetch is in flight).
   2. The backend detects the aborted request (`req.signal.aborted` / `close` event)
@@ -982,7 +1007,10 @@ version as a new query) rather than overwriting the existing row.
      `AbortController`.
   3. All in-memory rows accumulated so far are discarded.
   4. No run row is written to SQLite.
-  5. The API returns HTTP 200 with `{ "cancelled": true, "rows": null, "row_count": 0 }`.
+  5. The backend *attempts* to return `{ "cancelled": true, "rows": null }`, but
+     because the frontend initiated the abort the browser fetch will typically reject
+     before the response is received. **Frontend must rely primarily on catching
+     `AbortError` locally** to detect cancellation — do not depend on the response body.
   6. The frontend shows "Cancelled" state; no error banner.
 - Large result warning banner.
 - **Done when:** All tests pass; all error states display helpful messages; cancel
@@ -1002,6 +1030,7 @@ version as a new query) rather than overwriting the existing row.
 | Hard result size | 10 MB | `settings.max_bytes` | Abort; HTTP 413; not saved |
 | Run All: query failure | — | — | Continue to next query; status = "failed" |
 | Cancel (user) | — | — | AbortController; no partial save |
+| Total wall-clock time | unbounded | — | Intentionally unbounded; max pages × per-page timeout provides an implicit ceiling (default 50 × 30 s = 25 min). Add `max_total_duration_ms` in a future migration if needed. |
 
 ---
 
@@ -1031,8 +1060,11 @@ Tests for `middleware/validateEndpoint.js`:
 | 13 | `not-a-url` | 400 (parse failure) |
 | 14 | Hostname resolving to private IP | 400 (DNS rebinding) |
 
-The DNS rebinding test mocks `dns.promises.lookup` to return `10.0.0.1` for an
-otherwise-valid hostname.
+The DNS rebinding tests mock `dns.promises.lookup` with `{ all: true }`:
+- Returns `[{ address: '10.0.0.1', family: 4 }]` → rejected (private IPv4).
+- Returns `[{ address: '1.2.3.4', family: 4 }, { address: '10.0.0.1', family: 4 }]`
+  → rejected (any private address in the list blocks the request).
+- Returns `[{ address: '1.2.3.4', family: 4 }]` → allowed.
 
 ### `ponder.test.js`
 
