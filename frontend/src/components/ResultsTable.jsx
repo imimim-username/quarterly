@@ -69,6 +69,10 @@ export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id' }) 
         const n = Number(value)
         if (!isNaN(n)) return new Date(n * 1000).toLocaleString()
       }
+      if (meta.type === 'unix_ms') {
+        const n = Number(value)
+        if (!isNaN(n)) return new Date(n).toLocaleString()
+      }
       if (meta.decimals !== undefined) {
         try {
           const raw = BigInt(value)

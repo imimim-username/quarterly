@@ -208,7 +208,16 @@ export default function App() {
               {/* Error state */}
               {!running && runError && runError.error_type !== 'cancelled' && (
                 <div className="error-banner">
-                  <strong>{runError.error_type}</strong>: {runError.error_message}
+                  <strong>
+                    {runError.error_type === 'network' ? 'Network error' :
+                     runError.error_type === 'timeout' ? 'Request timed out' :
+                     runError.error_type === 'size_limit' ? 'Response too large' :
+                     runError.error_type === 'graphql' ? 'GraphQL error' :
+                     runError.error_type === 'page_limit' ? 'Page limit exceeded' :
+                     runError.error_type === 'row_limit' ? 'Row limit exceeded' :
+                     runError.error_type === 'invalid_endpoint' ? 'Invalid endpoint' :
+                     runError.error_type}
+                  </strong>: {runError.error_message}
                   {runError.graphql_errors && (
                     <ul style={{ marginTop: 4, paddingLeft: 16, fontSize: 12 }}>
                       {runError.graphql_errors.map((e, i) => <li key={i}>{e.message}</li>)}
@@ -227,7 +236,7 @@ export default function App() {
               {/* graphql_partial notice */}
               {currentRun?.error_type === 'graphql_partial' && (
                 <div className="warning-banner">
-                  Partial result: {currentRun.error_message}
+                  Partial result ({currentRun.row_count} rows): {currentRun.error_message}
                 </div>
               )}
 
