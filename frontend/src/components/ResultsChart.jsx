@@ -284,7 +284,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
         right: 12,
         top: 4,
         feature: {
-          saveAsImage: { name: 'chart', title: 'Save PNG' },
+          saveAsImage: { name: 'chart', title: 'Save PNG', excludeComponents: ['toolbox', 'dataZoom'] },
           restore: { title: 'Reset' },
           dataZoom: { title: { zoom: 'Zoom', back: 'Reset zoom' } },
         },
