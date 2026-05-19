@@ -24,6 +24,16 @@ function ECharts({ option, style, notMerge = false }) {
   return <div ref={containerRef} style={style} />
 }
 
+/** Compact axis tick formatter: 1,500,000 → "1.5M" */
+function fmtAxisVal(val) {
+  const abs = Math.abs(val)
+  if (abs >= 1e12) return `${+(val / 1e12).toFixed(2)}T`
+  if (abs >= 1e9)  return `${+(val / 1e9).toFixed(2)}B`
+  if (abs >= 1e6)  return `${+(val / 1e6).toFixed(2)}M`
+  if (abs >= 1e3)  return `${+(val / 1e3).toFixed(2)}K`
+  return String(val)
+}
+
 const CHART_TYPES = ['bar', 'line', 'area']
 const GROUP_BY_OPTIONS = ['none', 'day', 'week', 'month']
 const Y_MODE_OPTIONS = ['raw', 'cumulative']
@@ -209,7 +219,12 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
 
   const xLabels = useMemo(() => refData.map(p => {
     if (isTimestampX || groupBy !== 'none') {
-      return new Date(Number(p.x) * 1000).toLocaleDateString()
+      const d = new Date(Number(p.x) * 1000)
+      // "Jan 5" for day/none, "Jan 2025" for month, "Wk Jan 5" for week
+      if (groupBy === 'month') {
+        return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+      }
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })
     }
     return String(p.x)
   }), [refData, isTimestampX, groupBy])
@@ -227,7 +242,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
     const leftName = axisName(leftFields, fieldMeta)
     const rightName = axisName(rightFields, fieldMeta)
 
-    const axisLabelStyle = { fontSize: 11, color: 'var(--color-text-muted)' }
+    const axisLabelStyle = { fontSize: 11, color: 'var(--color-text-muted)', formatter: fmtAxisVal }
     const axisNameStyle = { fontSize: 11, color: 'var(--color-text-muted)', padding: 8 }
 
     return {
