@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { GraphiQL } from 'graphiql'
 import { explorerPlugin } from '@graphiql/plugin-explorer'
 import 'graphiql/graphiql.css'
-import '@graphiql/plugin-explorer/dist/style.css'
+import '@graphiql/plugin-explorer/style.css'
 
 // Explorer plugin instance — created once outside the component so it's stable.
 const explorer = explorerPlugin({ showAttribution: false })
