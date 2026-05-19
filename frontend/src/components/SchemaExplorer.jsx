@@ -1,6 +1,11 @@
 import { useState } from 'react'
 import { GraphiQL } from 'graphiql'
+import { explorerPlugin } from '@graphiql/plugin-explorer'
 import 'graphiql/graphiql.css'
+import '@graphiql/plugin-explorer/dist/style.css'
+
+// Explorer plugin instance — created once outside the component so it's stable.
+const explorer = explorerPlugin({ showAttribution: false })
 
 /**
  * Fetcher that routes all GraphQL traffic (including GraphiQL's own schema
@@ -69,6 +74,7 @@ export default function SchemaExplorer({ onClose, onUseQuery }) {
       <div style={{ flex: 1, overflow: 'hidden' }}>
         <GraphiQL
           fetcher={fetcher}
+          plugins={[explorer]}
           onEditQuery={setCurrentQuery}
         />
       </div>
