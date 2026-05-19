@@ -116,7 +116,7 @@ function makeSeries(fields, colorOffset, yAxisIndex, seriesType, chartData, fiel
   })
 }
 
-function YAxisSelector({ label, fields, setFields, allFields, colorOffset, fieldMeta, seriesType, setSeriesType }) {
+function YAxisSelector({ label, fields, setFields, allFields, colorOffset, fieldMeta, seriesType, setSeriesType, yMode, setYMode, showYMode }) {
   const available = allFields.filter(c => !fields.includes(c))
 
   const add = (col) => { if (col) setFields(prev => [...prev, col]) }
@@ -124,15 +124,24 @@ function YAxisSelector({ label, fields, setFields, allFields, colorOffset, field
 
   return (
     <div className="form-group" style={{ margin: 0 }}>
-      <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
         {label}
         <select
           value={seriesType}
           onChange={e => setSeriesType(e.target.value)}
-          style={{ fontSize: 11, padding: '1px 4px', marginLeft: 4 }}
+          style={{ fontSize: 11, padding: '1px 4px' }}
         >
           {CHART_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
+        {showYMode && (
+          <select
+            value={yMode}
+            onChange={e => setYMode(e.target.value)}
+            style={{ fontSize: 11, padding: '1px 4px' }}
+          >
+            {Y_MODE_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+        )}
       </label>
       <select value="" onChange={e => { add(e.target.value); e.target.value = '' }}>
         <option value="">Add column…</option>
@@ -174,7 +183,8 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
   const [leftType, setLeftType] = useState('bar')
   const [rightType, setRightType] = useState('line')
   const [groupBy, setGroupBy] = useState('none')
-  const [yMode, setYMode] = useState('raw')
+  const [leftYMode, setLeftYMode] = useState('raw')
+  const [rightYMode, setRightYMode] = useState('raw')
 
   if (!rows || rows.length === 0) {
     return <div style={{ color: 'var(--color-text-muted)', padding: 16 }}>No results to chart.</div>
@@ -182,20 +192,27 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
 
   const columns = Object.keys(rows[0] || {})
   const isTimestampX = xField === 'timestamp' || colDivisors[xField] === 'datetime'
-  const allYFields = [...leftFields, ...rightFields]
-  const hasChart = xField && allYFields.length > 0
+  const hasChart = xField && (leftFields.length > 0 || rightFields.length > 0)
 
-  const chartData = useMemo(
-    () => buildChartData(rows, xField, allYFields, colDivisors, groupBy, yMode),
-    [rows, xField, JSON.stringify(allYFields), colDivisors, groupBy, yMode]
+  const leftChartData = useMemo(
+    () => buildChartData(rows, xField, leftFields, colDivisors, groupBy, leftYMode),
+    [rows, xField, JSON.stringify(leftFields), colDivisors, groupBy, leftYMode]
   )
 
-  const xLabels = useMemo(() => chartData.map(p => {
+  const rightChartData = useMemo(
+    () => buildChartData(rows, xField, rightFields, colDivisors, groupBy, rightYMode),
+    [rows, xField, JSON.stringify(rightFields), colDivisors, groupBy, rightYMode]
+  )
+
+  // Use whichever dataset is available for x-axis labels
+  const refData = leftChartData.length > 0 ? leftChartData : rightChartData
+
+  const xLabels = useMemo(() => refData.map(p => {
     if (isTimestampX || groupBy !== 'none') {
       return new Date(Number(p.x) * 1000).toLocaleDateString()
     }
     return String(p.x)
-  }), [chartData, isTimestampX, groupBy])
+  }), [refData, isTimestampX, groupBy])
 
   const hasRightAxis = rightFields.length > 0
 
@@ -203,8 +220,8 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
     if (!hasChart) return {}
 
     const allSeries = [
-      ...makeSeries(leftFields, 0, 0, leftType, chartData, fieldMeta, colDivisors),
-      ...makeSeries(rightFields, leftFields.length, 1, rightType, chartData, fieldMeta, colDivisors),
+      ...makeSeries(leftFields, 0, 0, leftType, leftChartData, fieldMeta, colDivisors),
+      ...makeSeries(rightFields, leftFields.length, 1, rightType, rightChartData, fieldMeta, colDivisors),
     ]
 
     const axisDefaults = {
@@ -253,7 +270,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
       ],
       series: allSeries,
     }
-  }, [hasChart, leftFields, rightFields, leftType, rightType, chartData, xLabels, colDivisors, fieldMeta, hasRightAxis])
+  }, [hasChart, leftFields, rightFields, leftType, rightType, leftChartData, rightChartData, xLabels, colDivisors, fieldMeta, hasRightAxis])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -280,6 +297,9 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
           fieldMeta={fieldMeta}
           seriesType={leftType}
           setSeriesType={setLeftType}
+          yMode={leftYMode}
+          setYMode={setLeftYMode}
+          showYMode={isTimestampX}
         />
 
         {/* Divider */}
@@ -294,6 +314,9 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
           fieldMeta={fieldMeta}
           seriesType={rightType}
           setSeriesType={setRightType}
+          yMode={rightYMode}
+          setYMode={setRightYMode}
+          showYMode={isTimestampX}
         />
 
         {isTimestampX && (
@@ -303,12 +326,6 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
               <label>Group By</label>
               <select value={groupBy} onChange={e => setGroupBy(e.target.value)}>
                 {GROUP_BY_OPTIONS.map(g => <option key={g} value={g}>{g}</option>)}
-              </select>
-            </div>
-            <div className="form-group" style={{ minWidth: 120, margin: 0 }}>
-              <label>Y Mode</label>
-              <select value={yMode} onChange={e => setYMode(e.target.value)}>
-                {Y_MODE_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
             </div>
           </>
