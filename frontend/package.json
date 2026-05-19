@@ -11,13 +11,13 @@
     "@tanstack/react-virtual": "3.13.24",
     "@uiw/react-codemirror": "4.25.9",
     "@codemirror/lang-javascript": "6.2.5",
-    "html-to-image": "1.11.13",
+    "echarts": "5.6.0",
+    "echarts-for-react": "3.0.2",
     "react": "18.3.1",
     "react-datepicker": "7.6.0",
     "react-dom": "18.3.1",
     "@graphiql/plugin-explorer": "3.2.3",
-    "graphiql": "3.7.1",
-    "recharts": "2.15.4"
+    "graphiql": "3.7.1"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "6.6.3",
