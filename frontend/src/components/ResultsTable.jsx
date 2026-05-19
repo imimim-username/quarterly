@@ -103,8 +103,12 @@ export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id', co
   const formatCell = (col, value) => {
     if (value === null || value === undefined) return ''
 
-    // Per-column divisor toggle takes priority over fieldMeta.decimals
+    // Per-column toggle takes priority over fieldMeta
     const divisor = colDivisors[col]
+    if (divisor === 'datetime') {
+      const n = Number(value)
+      return isNaN(n) ? String(value) : new Date(n * 1000).toLocaleString()
+    }
     if (divisor && divisor !== 'raw') {
       return applyDivisor(value, divisor)
     }
@@ -167,6 +171,30 @@ export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id', co
                 <th key={col} onClick={() => handleSort(col)}>
                   {fieldMeta[col]?.label || col}
                   {sortCol === col ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+                  {col === 'timestamp' && (
+                    <button
+                      onClick={e => {
+                        e.stopPropagation()
+                        const cur = colDivisors['timestamp'] || 'raw'
+                        onDivisorChange?.({ ...colDivisors, timestamp: cur === 'datetime' ? 'raw' : 'datetime' })
+                      }}
+                      title="Toggle datetime formatting"
+                      style={{
+                        marginLeft: 5,
+                        fontSize: 10,
+                        padding: '1px 5px',
+                        background: divisor === 'datetime' ? 'var(--color-accent)' : 'var(--color-surface2)',
+                        border: '1px solid ' + (divisor === 'datetime' ? 'var(--color-accent)' : 'var(--color-border)'),
+                        color: divisor === 'datetime' ? '#fff' : 'var(--color-text-muted)',
+                        borderRadius: 3,
+                        cursor: 'pointer',
+                        lineHeight: 1.4,
+                        verticalAlign: 'middle',
+                      }}
+                    >
+                      {divisor === 'datetime' ? 'datetime' : 'raw'}
+                    </button>
+                  )}
                   {integerCols.has(col) && (
                     <button
                       onClick={e => cycleDivisor(col, e)}

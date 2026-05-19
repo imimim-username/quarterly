@@ -116,10 +116,19 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
           <ResponsiveContainer width="100%" height={350}>
             <ChartComponent data={rows}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-              <XAxis dataKey={xField} tick={{ fontSize: 11, fill: 'var(--color-text-muted)' }} />
+              <XAxis
+                dataKey={xField}
+                tick={{ fontSize: 11, fill: 'var(--color-text-muted)' }}
+                tickFormatter={colDivisors[xField] === 'datetime'
+                  ? v => new Date(Number(v) * 1000).toLocaleDateString()
+                  : undefined}
+              />
               <YAxis tick={{ fontSize: 11, fill: 'var(--color-text-muted)' }} />
               <Tooltip
                 contentStyle={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', fontSize: 12 }}
+                labelFormatter={colDivisors[xField] === 'datetime'
+                  ? v => new Date(Number(v) * 1000).toLocaleString()
+                  : undefined}
               />
               <Legend />
               {yFields.map((field, i) => {
