@@ -90,19 +90,19 @@ function buildChartData(rows, xField, allYFields, colDivisors, groupBy, yMode) {
   return data
 }
 
-function seriesLabel(field, fieldMeta, colDivisors) {
-  const base = fieldMeta[field]?.label || field
-  const d = colDivisors[field]
-  if (d === '1e18') return `${base} (÷1e18)`
-  if (d === '1e6') return `${base} (÷1e6)`
-  return base
+function seriesLabel(field, fieldMeta) {
+  return fieldMeta[field]?.label || field
 }
 
-function makeSeries(fields, colorOffset, yAxisIndex, seriesType, chartData, fieldMeta, colDivisors) {
+function axisName(fields, fieldMeta) {
+  return fields.map(f => fieldMeta[f]?.label || f).join(', ')
+}
+
+function makeSeries(fields, colorOffset, yAxisIndex, seriesType, chartData, fieldMeta) {
   return fields.map((f, i) => {
     const ci = (colorOffset + i) % COLORS.length
     return {
-      name: seriesLabel(f, fieldMeta, colDivisors),
+      name: seriesLabel(f, fieldMeta),
       type: seriesType === 'area' ? 'line' : seriesType,
       yAxisIndex,
       data: chartData.map(p => p[f] ?? null),
@@ -220,15 +220,15 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
     if (!hasChart) return {}
 
     const allSeries = [
-      ...makeSeries(leftFields, 0, 0, leftType, leftChartData, fieldMeta, colDivisors),
-      ...makeSeries(rightFields, leftFields.length, 1, rightType, rightChartData, fieldMeta, colDivisors),
+      ...makeSeries(leftFields, 0, 0, leftType, leftChartData, fieldMeta),
+      ...makeSeries(rightFields, leftFields.length, 1, rightType, rightChartData, fieldMeta),
     ]
 
-    const axisDefaults = {
-      type: 'value',
-      axisLabel: { fontSize: 11, color: 'var(--color-text-muted)' },
-      splitLine: { lineStyle: { color: 'var(--color-border)', type: 'dashed' } },
-    }
+    const leftName = axisName(leftFields, fieldMeta)
+    const rightName = axisName(rightFields, fieldMeta)
+
+    const axisLabelStyle = { fontSize: 11, color: 'var(--color-text-muted)' }
+    const axisNameStyle = { fontSize: 11, color: 'var(--color-text-muted)', padding: 8 }
 
     return {
       tooltip: {
@@ -256,21 +256,46 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
         { type: 'slider', bottom: 20, height: 20, borderColor: 'var(--color-border)' },
         { type: 'inside' },
       ],
-      grid: { top: 32, left: 60, right: hasRightAxis ? 60 : 20, bottom: 90 },
+      grid: { top: 40, left: hasRightAxis ? 70 : 60, right: hasRightAxis ? 70 : 20, bottom: 100 },
       xAxis: {
         type: 'category',
         data: xLabels,
+        name: fieldMeta[xField]?.label || xField,
+        nameLocation: 'middle',
+        nameGap: xLabels.length > 12 ? 50 : 36,
+        nameTextStyle: axisNameStyle,
         axisLabel: { rotate: xLabels.length > 12 ? 30 : 0, fontSize: 11, color: 'var(--color-text-muted)' },
         axisLine: { lineStyle: { color: 'var(--color-border)' } },
         splitLine: { show: false },
       },
       yAxis: [
-        { ...axisDefaults, position: 'left' },
-        { ...axisDefaults, position: 'right', show: hasRightAxis, splitLine: { show: false } },
+        {
+          type: 'value',
+          position: 'left',
+          name: leftName,
+          nameLocation: 'middle',
+          nameGap: 50,
+          nameRotate: 90,
+          nameTextStyle: axisNameStyle,
+          axisLabel: axisLabelStyle,
+          splitLine: { lineStyle: { color: 'var(--color-border)', type: 'dashed' } },
+        },
+        {
+          type: 'value',
+          position: 'right',
+          show: hasRightAxis,
+          name: rightName,
+          nameLocation: 'middle',
+          nameGap: 50,
+          nameRotate: -90,
+          nameTextStyle: axisNameStyle,
+          axisLabel: axisLabelStyle,
+          splitLine: { show: false },
+        },
       ],
       series: allSeries,
     }
-  }, [hasChart, leftFields, rightFields, leftType, rightType, leftChartData, rightChartData, xLabels, colDivisors, fieldMeta, hasRightAxis])
+  }, [hasChart, xField, leftFields, rightFields, leftType, rightType, leftChartData, rightChartData, xLabels, fieldMeta, hasRightAxis])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
