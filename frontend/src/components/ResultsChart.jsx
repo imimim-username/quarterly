@@ -1,5 +1,28 @@
-import React, { useState, useMemo } from 'react'
-import ReactECharts from 'echarts-for-react'
+import React, { useState, useMemo, useRef, useEffect } from 'react'
+import * as echarts from 'echarts'
+
+/**
+ * Minimal ECharts React wrapper — no third-party adapter needed.
+ * Handles init, option updates, resize, and dispose.
+ */
+function ECharts({ option, style, notMerge = false }) {
+  const containerRef = useRef(null)
+  const instanceRef = useRef(null)
+
+  useEffect(() => {
+    const chart = echarts.init(containerRef.current, 'dark')
+    instanceRef.current = chart
+    const ro = new ResizeObserver(() => chart.resize())
+    ro.observe(containerRef.current)
+    return () => { ro.disconnect(); chart.dispose() }
+  }, [])
+
+  useEffect(() => {
+    instanceRef.current?.setOption(option, { notMerge })
+  }, [option, notMerge])
+
+  return <div ref={containerRef} style={style} />
+}
 
 const CHART_TYPES = ['bar', 'line', 'area']
 const GROUP_BY_OPTIONS = ['none', 'day', 'week', 'month']
@@ -228,12 +251,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
 
       {/* Chart */}
       {xField && yFields.length > 0 ? (
-        <ReactECharts
-          option={option}
-          notMerge
-          style={{ height: 420, width: '100%' }}
-          theme="dark"
-        />
+        <ECharts option={option} notMerge style={{ height: 420, width: '100%' }} />
       ) : (
         <div style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>
           Select X and at least one Y field to render chart.
