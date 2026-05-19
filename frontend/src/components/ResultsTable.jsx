@@ -3,15 +3,42 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 
 const ROW_HEIGHT = 28
 const VIRTUALIZE_THRESHOLD = 500
+const DIVISOR_CYCLE = ['raw', '1e6', '1e18']
+
+function isIntegerOnly(rows, field) {
+  for (const row of rows) {
+    const val = row[field]
+    if (val === null || val === undefined || val === '') continue
+    if (!/^-?\d+$/.test(String(val))) return false
+  }
+  return true
+}
+
+function applyDivisor(value, divisor) {
+  try {
+    const raw = BigInt(value)
+    const decimals = divisor === '1e18' ? 18n : 6n
+    const pow = 10n ** decimals
+    const negative = raw < 0n
+    const abs = negative ? -raw : raw
+    const intPart = abs / pow
+    const fracRaw = (abs % pow).toString().padStart(Number(decimals), '0').replace(/0+$/, '')
+    const result = fracRaw.length > 0 ? `${intPart}.${fracRaw}` : `${intPart}`
+    return negative ? `-${result}` : result
+  } catch {
+    return String(value)
+  }
+}
 
 /**
  * ResultsTable — sortable table with virtualisation for large datasets.
  * Column order: key field first, then insertion order.
- * Numeric fields scaled via fieldMeta.
+ * Numeric fields scaled via fieldMeta or per-column divisor toggle (÷1e6 / ÷1e18).
  */
 export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id' }) {
   const [sortCol, setSortCol] = useState(null)
   const [sortDir, setSortDir] = useState('asc')
+  const [colDivisors, setColDivisors] = useState({})
   const parentRef = useRef(null)
 
   const columns = useMemo(() => {
@@ -32,6 +59,21 @@ export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id' }) 
     }
     return cols
   }, [rows, keyField])
+
+  // Columns eligible for divisor toggle: integer-only, not timestamp
+  const integerCols = useMemo(
+    () => new Set(columns.filter(col => col !== 'timestamp' && isIntegerOnly(rows, col))),
+    [columns, rows]
+  )
+
+  const cycleDivisor = (col, e) => {
+    e.stopPropagation()
+    setColDivisors(prev => {
+      const cur = prev[col] || 'raw'
+      const next = DIVISOR_CYCLE[(DIVISOR_CYCLE.indexOf(cur) + 1) % DIVISOR_CYCLE.length]
+      return { ...prev, [col]: next }
+    })
+  }
 
   const sortedRows = useMemo(() => {
     if (!rows) return []
@@ -63,6 +105,13 @@ export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id' }) 
 
   const formatCell = (col, value) => {
     if (value === null || value === undefined) return ''
+
+    // Per-column divisor toggle takes priority over fieldMeta.decimals
+    const divisor = colDivisors[col]
+    if (divisor && divisor !== 'raw') {
+      return applyDivisor(value, divisor)
+    }
+
     const meta = fieldMeta[col]
     if (meta) {
       if (meta.type === 'unix_seconds') {
@@ -115,12 +164,35 @@ export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id' }) 
       <table className="results-table">
         <thead>
           <tr>
-            {columns.map(col => (
-              <th key={col} onClick={() => handleSort(col)}>
-                {fieldMeta[col]?.label || col}
-                {sortCol === col ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
-              </th>
-            ))}
+            {columns.map(col => {
+              const divisor = colDivisors[col] || 'raw'
+              return (
+                <th key={col} onClick={() => handleSort(col)}>
+                  {fieldMeta[col]?.label || col}
+                  {sortCol === col ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+                  {integerCols.has(col) && (
+                    <button
+                      onClick={e => cycleDivisor(col, e)}
+                      title="Cycle display divisor: raw → ÷1e6 → ÷1e18"
+                      style={{
+                        marginLeft: 5,
+                        fontSize: 10,
+                        padding: '1px 5px',
+                        background: divisor === 'raw' ? 'var(--color-surface2)' : 'var(--color-accent)',
+                        border: '1px solid ' + (divisor === 'raw' ? 'var(--color-border)' : 'var(--color-accent)'),
+                        color: divisor === 'raw' ? 'var(--color-text-muted)' : '#fff',
+                        borderRadius: 3,
+                        cursor: 'pointer',
+                        lineHeight: 1.4,
+                        verticalAlign: 'middle',
+                      }}
+                    >
+                      {divisor === 'raw' ? 'raw' : divisor === '1e6' ? '÷1e6' : '÷1e18'}
+                    </button>
+                  )}
+                </th>
+              )
+            })}
           </tr>
         </thead>
         <tbody>
