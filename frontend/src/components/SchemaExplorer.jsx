@@ -1,11 +1,11 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { GraphiQL } from 'graphiql'
-import { explorerPlugin } from '@graphiql/plugin-explorer'
+import { Explorer } from 'graphiql-explorer'
+import { buildClientSchema, getIntrospectionQuery } from 'graphql'
 import 'graphiql/graphiql.css'
-import '@graphiql/plugin-explorer/style.css'
 
 // Explorer plugin instance — created once outside the component so it's stable.
-const explorer = explorerPlugin({ showAttribution: false })
+// (kept for reference; we now render Explorer directly instead of via the plugin system)
 
 /**
  * Fetcher that routes all GraphQL traffic (including GraphiQL's own schema
@@ -20,8 +20,13 @@ const fetcher = async ({ query, variables, operationName }) => {
   return res.json()
 }
 
+const INTROSPECTION = getIntrospectionQuery()
+
 /**
- * SchemaExplorer — full-screen GraphiQL overlay.
+ * SchemaExplorer — full-screen split overlay.
+ *
+ * Left panel:  graphiql-explorer field tree (visual query builder)
+ * Right panel: GraphiQL editor + Docs + History
  *
  * Props:
  *   onClose()           — close the overlay without transferring a query
@@ -29,6 +34,14 @@ const fetcher = async ({ query, variables, operationName }) => {
  */
 export default function SchemaExplorer({ onClose, onUseQuery }) {
   const [currentQuery, setCurrentQuery] = useState('')
+  const [schema, setSchema] = useState(null)
+
+  // Fetch schema once on mount via the proxy (introspection query)
+  useEffect(() => {
+    fetcher({ query: INTROSPECTION })
+      .then(r => { if (r?.data) setSchema(buildClientSchema(r.data)) })
+      .catch(() => {})
+  }, [])
 
   return (
     <div style={{
@@ -70,13 +83,39 @@ export default function SchemaExplorer({ onClose, onUseQuery }) {
         </button>
       </div>
 
-      {/* GraphiQL fills the remaining space — its own CSS handles internal layout */}
-      <div style={{ flex: 1, overflow: 'hidden' }}>
-        <GraphiQL
-          fetcher={fetcher}
-          plugins={[explorer]}
-          onEditQuery={setCurrentQuery}
-        />
+      {/* Body: field tree on left, GraphiQL on right */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+
+        {/* Left panel — visual query builder */}
+        <div style={{
+          width: 320,
+          flexShrink: 0,
+          overflowY: 'auto',
+          borderRight: '1px solid var(--color-border)',
+        }}>
+          {schema ? (
+            <Explorer
+              schema={schema}
+              query={currentQuery}
+              onEdit={setCurrentQuery}
+              explorerIsOpen={true}
+              onRunOperation={() => {}}
+            />
+          ) : (
+            <div style={{ padding: 16, fontSize: 12, color: 'var(--color-text-muted)' }}>
+              Loading schema…
+            </div>
+          )}
+        </div>
+
+        {/* Right panel — GraphiQL editor, autocomplete, docs, history */}
+        <div style={{ flex: 1, overflow: 'hidden' }}>
+          <GraphiQL
+            fetcher={fetcher}
+            query={currentQuery}
+            onEditQuery={setCurrentQuery}
+          />
+        </div>
       </div>
     </div>
   )
