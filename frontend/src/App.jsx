@@ -309,6 +309,7 @@ export default function App() {
                   rows={currentRun.rows}
                   activeFilters={activeFilters}
                   onChange={setActiveFilters}
+                  addressLabels={addressLabels}
                 />
               )}
 

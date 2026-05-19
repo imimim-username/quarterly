@@ -1,26 +1,6 @@
 import React, { useState, useMemo, useRef } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-
-const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/
-
-/** Build a two-level lookup: address (lowercase) → chain → name */
-function buildAddressMap(addressLabels) {
-  const map = new Map()
-  for (const label of addressLabels) {
-    const addr = label.address.toLowerCase()
-    if (!map.has(addr)) map.set(addr, new Map())
-    map.get(addr).set(label.chain, label.name)
-  }
-  return map
-}
-
-function resolveAddress(value, chain, addressMap) {
-  if (!ADDRESS_RE.test(value)) return null
-  const chainMap = addressMap.get(value.toLowerCase())
-  if (!chainMap) return null
-  // Exact chain match first, then blank-chain fallback
-  return chainMap.get(chain) ?? chainMap.get('') ?? null
-}
+import { buildAddressMap, resolveAddress } from '../utils/addressLabels.js'
 
 const ROW_HEIGHT = 28
 const VIRTUALIZE_THRESHOLD = 500

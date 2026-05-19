@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { buildAddressMap, resolveAddress } from '../utils/addressLabels.js'
 
 /**
  * ResultFilters — auto-detects filterable columns from result rows and renders
@@ -17,7 +18,15 @@ function isIntegerOnly(rows, field) {
   return true
 }
 
-export default function ResultFilters({ rows, activeFilters, onChange }) {
+export default function ResultFilters({ rows, activeFilters, onChange, addressLabels = [] }) {
+  const addressMap = useMemo(() => buildAddressMap(addressLabels), [addressLabels])
+
+  // Chain context: use the single active chain value if exactly one is selected
+  const chainCtx = useMemo(() => {
+    const active = activeFilters.chain || []
+    return active.length === 1 ? active[0] : ''
+  }, [activeFilters.chain])
+
   const filterableFields = useMemo(() => {
     if (!rows || rows.length === 0) return []
     const cols = Object.keys(rows[0])
@@ -36,7 +45,11 @@ export default function ResultFilters({ rows, activeFilters, onChange }) {
 
   if (filterableFields.length === 0) return null
 
-  const chipLabel = str => str.length > 20 ? str.slice(0, 8) + '…' + str.slice(-6) : str
+  const chipLabel = val => {
+    const label = resolveAddress(val, chainCtx, addressMap)
+    if (label !== null) return label
+    return val.length > 20 ? val.slice(0, 8) + '…' + val.slice(-6) : val
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
@@ -81,7 +94,7 @@ export default function ResultFilters({ rows, activeFilters, onChange }) {
                 <button
                   key={val}
                   onClick={() => toggle(val)}
-                  title={val.length > 20 ? val : undefined}
+                  title={val}
                   style={{
                     padding: '3px 10px',
                     fontSize: 12,
