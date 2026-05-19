@@ -19,16 +19,13 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id' }) 
   }
 
   const columns = Object.keys(rows[0] || {})
-  const numericCols = columns.filter(col => {
-    const meta = fieldMeta[col]
-    if (meta?.type === 'unix_seconds' || meta?.type === 'id') return false
-    if (meta?.decimals !== undefined) return true
-    const samples = rows.slice(0, 5).map(r => r[col])
-    return samples.every(v => v !== null && v !== undefined && Number.isFinite(parseFloat(v)) && parseFloat(v) <= Number.MAX_SAFE_INTEGER)
-  })
 
-  const toggleYField = (col) => {
-    setYFields(prev => prev.includes(col) ? prev.filter(f => f !== col) : [...prev, col])
+  const addYField = (col) => {
+    if (col && !yFields.includes(col)) setYFields(prev => [...prev, col])
+  }
+
+  const removeYField = (col) => {
+    setYFields(prev => prev.filter(f => f !== col))
   }
 
   const handleExportPng = async () => {
@@ -57,24 +54,38 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id' }) 
             {columns.map(c => <option key={c} value={c}>{fieldMeta[c]?.label || c}</option>)}
           </select>
         </div>
-        <div>
-          <label style={{ fontSize: 12, color: 'var(--color-text-muted)', display: 'block', marginBottom: 4 }}>Y Fields</label>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {numericCols.map((col, i) => (
-              <button
-                key={col}
-                onClick={() => toggleYField(col)}
-                style={{
-                  padding: '2px 8px',
-                  fontSize: 11,
-                  background: yFields.includes(col) ? COLORS[i % COLORS.length] : 'var(--color-surface2)',
-                  border: '1px solid ' + (yFields.includes(col) ? COLORS[i % COLORS.length] : 'var(--color-border)'),
-                }}
-              >
-                {fieldMeta[col]?.label || col}
-              </button>
+        <div className="form-group" style={{ minWidth: 180, margin: 0 }}>
+          <label>Y Fields</label>
+          <select
+            value=""
+            onChange={e => { addYField(e.target.value); e.target.value = '' }}
+          >
+            <option value="">Add column…</option>
+            {columns.filter(c => !yFields.includes(c)).map(c => (
+              <option key={c} value={c}>{fieldMeta[c]?.label || c}</option>
             ))}
-          </div>
+          </select>
+          {yFields.length > 0 && (
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+              {yFields.map((col, i) => (
+                <span key={col} style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 3,
+                  padding: '1px 6px', fontSize: 11, borderRadius: 3,
+                  background: COLORS[i % COLORS.length],
+                  color: '#fff',
+                }}>
+                  {fieldMeta[col]?.label || col}
+                  <button
+                    onClick={() => removeYField(col)}
+                    style={{
+                      background: 'none', border: 'none', color: '#fff',
+                      cursor: 'pointer', padding: 0, fontSize: 12, lineHeight: 1,
+                    }}
+                  >×</button>
+                </span>
+              ))}
+            </div>
+          )}
         </div>
         <div className="form-group" style={{ minWidth: 120, margin: 0 }}>
           <label>Chart Type</label>
