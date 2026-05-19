@@ -80,7 +80,10 @@ export default function App() {
       ? existing.map(v => v.name === view.name ? view : v)
       : [...existing, view]
     const result = await updateQuery(selectedQuery.id, { ...selectedQuery, chart_views: updated })
-    if (result.ok && result.data) setSelectedQuery(result.data)
+    if (result.ok && result.data) {
+      setSelectedQuery(result.data)
+      setSidebarRefresh(n => n + 1)
+    }
     return result.ok
   }, [selectedQuery])
 
