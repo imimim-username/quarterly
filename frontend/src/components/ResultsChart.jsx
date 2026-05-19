@@ -275,7 +275,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
       legend: {
         data: allSeries.map(s => s.name),
         textStyle: { fontSize: 11 },
-        bottom: 48,
+        top: 4,
       },
       toolbox: {
         right: 12,
@@ -290,7 +290,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
         { type: 'slider', bottom: 20, height: 20 },
         { type: 'inside' },
       ],
-      grid: { top: 40, left: hasRightAxis ? 70 : 60, right: hasRightAxis ? 70 : 20, bottom: 100 },
+      grid: { top: 56, left: hasRightAxis ? 70 : 60, right: hasRightAxis ? 70 : 20, bottom: 80 },
       xAxis: {
         type: 'category',
         data: xLabels,
