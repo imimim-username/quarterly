@@ -37,10 +37,11 @@ function validateQueryBody(body) {
     }
   }
 
-  // Validate JSON fields
+  // Validate JSON fields — accept either a JSON string or an already-parsed value
   if (body.variable_defs !== undefined) {
     try {
-      const parsed = JSON.parse(body.variable_defs);
+      const raw = typeof body.variable_defs === 'string' ? body.variable_defs : JSON.stringify(body.variable_defs);
+      const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) return 'variable_defs must be a JSON array.';
     } catch (e) {
       return 'variable_defs must be valid JSON.';
@@ -49,7 +50,8 @@ function validateQueryBody(body) {
 
   if (body.field_meta !== undefined) {
     try {
-      const parsed = JSON.parse(body.field_meta);
+      const raw = typeof body.field_meta === 'string' ? body.field_meta : JSON.stringify(body.field_meta);
+      const parsed = JSON.parse(raw);
       if (typeof parsed !== 'object' || Array.isArray(parsed)) return 'field_meta must be a JSON object.';
     } catch (e) {
       return 'field_meta must be valid JSON.';
