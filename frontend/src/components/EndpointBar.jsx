@@ -6,7 +6,7 @@ import { getSettings, updateSettings, pingEndpoint } from '../api/client.js'
  * Shows a connection dot (green/yellow/red) reflecting last ping result.
  * Saves to settings on blur/Enter. Shows inline validation errors.
  */
-export default function EndpointBar() {
+export default function EndpointBar({ onExplore }) {
   const [endpoint, setEndpoint] = useState('')
   const [status, setStatus] = useState('yellow') // 'green' | 'yellow' | 'red'
   const [error, setError] = useState('')
@@ -129,6 +129,15 @@ export default function EndpointBar() {
       >
         {pinging ? <span className="spinner" /> : 'Ping'}
       </button>
+      {status === 'green' && onExplore && (
+        <button
+          onClick={onExplore}
+          style={{ flexShrink: 0, fontSize: 12, padding: '4px 10px' }}
+          title="Open GraphiQL schema explorer"
+        >
+          Explore Schema
+        </button>
+      )}
     </div>
   )
 }

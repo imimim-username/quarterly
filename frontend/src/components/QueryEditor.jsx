@@ -33,7 +33,7 @@ function emptyQuery() {
  * QueryEditor — full metadata form with CodeMirror GQL editor.
  * "Run" button calls onRun(query). Save/Delete buttons persist to backend.
  */
-export default function QueryEditor({ query, onSave, onDelete, onRun, running }) {
+export default function QueryEditor({ query, prefillGql, onSave, onDelete, onRun, running }) {
   const [form, setForm] = useState(emptyQuery())
   const [fieldMetaText, setFieldMetaText] = useState('{}')
   const [error, setError] = useState('')
@@ -52,11 +52,11 @@ export default function QueryEditor({ query, onSave, onDelete, onRun, running })
           : query.field_meta || '{}'
       )
     } else {
-      setForm(emptyQuery())
+      setForm({ ...emptyQuery(), gql: prefillGql || '' })
       setFieldMetaText('{}')
     }
     setError('')
-  }, [query])
+  }, [query, prefillGql])
 
   const set = (field, value) => setForm(f => ({ ...f, [field]: value }))
 

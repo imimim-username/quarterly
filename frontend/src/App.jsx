@@ -9,6 +9,7 @@ import ExportButtons from './components/ExportButtons.jsx'
 import HistoryDrawer from './components/HistoryDrawer.jsx'
 import CompareView from './components/CompareView.jsx'
 import ChainFilter from './components/ChainFilter.jsx'
+import SchemaExplorer from './components/SchemaExplorer.jsx'
 import { createRun } from './api/client.js'
 
 export default function App() {
@@ -23,6 +24,8 @@ export default function App() {
   const [compareRuns, setCompareRuns] = useState(null) // { runA, runB }
   const [activeChains, setActiveChains] = useState([])
   const [sidebarRefresh, setSidebarRefresh] = useState(0)
+  const [schemaExplorerOpen, setSchemaExplorerOpen] = useState(false)
+  const [prefillGql, setPrefillGql] = useState(null)
 
   const abortRef = useRef(null)
 
@@ -39,6 +42,16 @@ export default function App() {
     setSelectedQuery(null)
     setCurrentRun(null)
     setRunError(null)
+    setPrefillGql(null)
+    setTab('editor')
+  }, [])
+
+  const handleUseQuery = useCallback((gql) => {
+    setSchemaExplorerOpen(false)
+    setSelectedQuery(null)
+    setCurrentRun(null)
+    setRunError(null)
+    setPrefillGql(gql)
     setTab('editor')
   }, [])
 
@@ -135,7 +148,7 @@ export default function App() {
         <span style={{ fontWeight: 700, fontSize: 15, color: 'var(--color-accent)', flexShrink: 0 }}>
           quarterly
         </span>
-        <EndpointBar />
+        <EndpointBar onExplore={() => setSchemaExplorerOpen(true)} />
         <DateRangePicker
           startDate={startDate}
           endDate={endDate}
@@ -179,6 +192,7 @@ export default function App() {
           {tab === 'editor' && (
             <QueryEditor
               query={selectedQuery}
+              prefillGql={prefillGql}
               onSave={handleSaveQuery}
               onDelete={handleDeleteQuery}
               onRun={handleRun}
@@ -284,6 +298,14 @@ export default function App() {
           )}
         </div>
       </div>
+
+      {/* Schema explorer overlay */}
+      {schemaExplorerOpen && (
+        <SchemaExplorer
+          onClose={() => setSchemaExplorerOpen(false)}
+          onUseQuery={handleUseQuery}
+        />
+      )}
 
       {/* History drawer */}
       <HistoryDrawer
