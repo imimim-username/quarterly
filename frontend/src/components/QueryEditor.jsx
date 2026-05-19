@@ -209,7 +209,7 @@ export default function QueryEditor({ query, prefillGql, onSave, onDelete, onRun
       </div>
 
       <div style={{ display: 'flex', gap: 8, paddingBottom: 16 }}>
-        <button onClick={handleRun} disabled={running || !form.gql || !form.result_path} style={{ background: 'var(--color-accent)', border: 'none' }}>
+        <button onClick={handleRun} disabled={running || !query?.id || !form.gql || !form.result_path} style={{ background: 'var(--color-accent)', border: 'none' }}>
           {running ? <><span className="spinner" style={{ marginRight: 6 }} />Running…</> : '▶ Run'}
         </button>
         <button onClick={handleSave} disabled={saving}>

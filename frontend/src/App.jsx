@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react'
+import React, { useState, useRef, useCallback, useMemo } from 'react'
 import EndpointBar from './components/EndpointBar.jsx'
 import DateRangePicker from './components/DateRangePicker.jsx'
 import QuerySidebar from './components/QuerySidebar.jsx'
@@ -8,7 +8,7 @@ import ResultsChart from './components/ResultsChart.jsx'
 import ExportButtons from './components/ExportButtons.jsx'
 import HistoryDrawer from './components/HistoryDrawer.jsx'
 import CompareView from './components/CompareView.jsx'
-import ChainFilter from './components/ChainFilter.jsx'
+import ResultFilters from './components/ResultFilters.jsx'
 import SchemaExplorer from './components/SchemaExplorer.jsx'
 import { createRun } from './api/client.js'
 
@@ -22,7 +22,7 @@ export default function App() {
   const [runError, setRunError] = useState(null)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [compareRuns, setCompareRuns] = useState(null) // { runA, runB }
-  const [activeChains, setActiveChains] = useState([])
+  const [activeFilters, setActiveFilters] = useState({})
   const [sidebarRefresh, setSidebarRefresh] = useState(0)
   const [schemaExplorerOpen, setSchemaExplorerOpen] = useState(false)
   const [prefillGql, setPrefillGql] = useState(null)
@@ -33,7 +33,7 @@ export default function App() {
     setSelectedQuery(query)
     setCurrentRun(null)
     setRunError(null)
-    setActiveChains([])
+    setActiveFilters({})
     setTab('editor')
     setHistoryOpen(false)
   }, [])
@@ -70,7 +70,7 @@ export default function App() {
     setRunning(true)
     setRunError(null)
     setCurrentRun(null)
-    setActiveChains([])
+    setActiveFilters({})
     setTab('results')
 
     // Create AbortController for this run
@@ -118,7 +118,7 @@ export default function App() {
   const handleLoadRun = (run) => {
     setCurrentRun(run)
     setRunError(null)
-    setActiveChains([])
+    setActiveFilters({})
     setTab('results')
     setHistoryOpen(false)
   }
@@ -129,13 +129,15 @@ export default function App() {
     setHistoryOpen(false)
   }
 
-  // Filter rows by active chains
-  const chainField = selectedQuery?.chain_field || 'chain'
-  const filteredRows = currentRun?.rows
-    ? (activeChains.length === 0
-        ? currentRun.rows
-        : currentRun.rows.filter(r => activeChains.includes(String(r[chainField]))))
-    : []
+  // Filter rows by active filters (AND across all active fields)
+  const filteredRows = useMemo(() => {
+    if (!currentRun?.rows) return []
+    const entries = Object.entries(activeFilters).filter(([, vals]) => vals.length > 0)
+    if (entries.length === 0) return currentRun.rows
+    return currentRun.rows.filter(row =>
+      entries.every(([field, vals]) => vals.includes(String(row[field])))
+    )
+  }, [currentRun, activeFilters])
 
   const fieldMeta = typeof selectedQuery?.field_meta === 'object'
     ? selectedQuery.field_meta
@@ -264,13 +266,12 @@ export default function App() {
                 </div>
               )}
 
-              {/* Chain filter */}
+              {/* Dynamic field filters */}
               {currentRun?.rows && currentRun.rows.length > 0 && (
-                <ChainFilter
+                <ResultFilters
                   rows={currentRun.rows}
-                  chainField={chainField}
-                  activeChains={activeChains}
-                  onChange={setActiveChains}
+                  activeFilters={activeFilters}
+                  onChange={setActiveFilters}
                 />
               )}
 
