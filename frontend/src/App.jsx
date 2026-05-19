@@ -348,6 +348,7 @@ export default function App() {
  */
 function ResultsView({ rows, fieldMeta, keyField }) {
   const [view, setView] = useState('table')
+  const [colDivisors, setColDivisors] = useState({})
 
   return (
     <div>
@@ -355,8 +356,8 @@ function ResultsView({ rows, fieldMeta, keyField }) {
         <button className={view === 'table' ? 'active' : ''} onClick={() => setView('table')}>Table</button>
         <button className={view === 'chart' ? 'active' : ''} onClick={() => setView('chart')}>Chart</button>
       </div>
-      {view === 'table' && <ResultsTable rows={rows} fieldMeta={fieldMeta} keyField={keyField} />}
-      {view === 'chart' && <ResultsChart rows={rows} fieldMeta={fieldMeta} keyField={keyField} />}
+      {view === 'table' && <ResultsTable rows={rows} fieldMeta={fieldMeta} keyField={keyField} colDivisors={colDivisors} onDivisorChange={setColDivisors} />}
+      {view === 'chart' && <ResultsChart rows={rows} fieldMeta={fieldMeta} keyField={keyField} colDivisors={colDivisors} />}
     </div>
   )
 }

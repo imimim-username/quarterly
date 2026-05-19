@@ -35,10 +35,9 @@ function applyDivisor(value, divisor) {
  * Column order: key field first, then insertion order.
  * Numeric fields scaled via fieldMeta or per-column divisor toggle (÷1e6 / ÷1e18).
  */
-export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id' }) {
+export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id', colDivisors = {}, onDivisorChange }) {
   const [sortCol, setSortCol] = useState(null)
   const [sortDir, setSortDir] = useState('asc')
-  const [colDivisors, setColDivisors] = useState({})
   const parentRef = useRef(null)
 
   const columns = useMemo(() => {
@@ -68,11 +67,9 @@ export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id' }) 
 
   const cycleDivisor = (col, e) => {
     e.stopPropagation()
-    setColDivisors(prev => {
-      const cur = prev[col] || 'raw'
-      const next = DIVISOR_CYCLE[(DIVISOR_CYCLE.indexOf(cur) + 1) % DIVISOR_CYCLE.length]
-      return { ...prev, [col]: next }
-    })
+    const cur = colDivisors[col] || 'raw'
+    const next = DIVISOR_CYCLE[(DIVISOR_CYCLE.indexOf(cur) + 1) % DIVISOR_CYCLE.length]
+    onDivisorChange?.({ ...colDivisors, [col]: next })
   }
 
   const sortedRows = useMemo(() => {

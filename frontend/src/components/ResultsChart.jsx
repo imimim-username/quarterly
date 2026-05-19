@@ -8,7 +8,22 @@ const COLORS = ['#e94560', '#2196f3', '#4caf50', '#ff9800', '#9c27b0', '#00bcd4'
 /**
  * ResultsChart — Recharts wrapper with X/Y field selection and PNG export.
  */
-export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id' }) {
+function applyDivisorNumeric(value, divisor) {
+  if (!divisor || divisor === 'raw') return Number(value)
+  try {
+    // Use BigInt for the integer part, then convert to float for charting
+    const raw = BigInt(value)
+    const decimals = divisor === '1e18' ? 18n : 6n
+    const pow = 10n ** decimals
+    const intPart = Number(raw / pow)
+    const fracPart = Number(raw % pow) / Number(pow)
+    return intPart + fracPart
+  } catch {
+    return Number(value)
+  }
+}
+
+export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', colDivisors = {} }) {
   const [xField, setXField] = useState('')
   const [yFields, setYFields] = useState([])
   const [chartType, setChartType] = useState('bar')
@@ -107,15 +122,23 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id' }) 
                 contentStyle={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', fontSize: 12 }}
               />
               <Legend />
-              {yFields.map((field, i) => (
-                <SeriesComponent
-                  key={field}
-                  dataKey={field}
-                  name={fieldMeta[field]?.label || field}
-                  fill={COLORS[i % COLORS.length]}
-                  stroke={COLORS[i % COLORS.length]}
-                />
-              ))}
+              {yFields.map((field, i) => {
+                const divisor = colDivisors[field]
+                const dataKey = divisor && divisor !== 'raw'
+                  ? row => applyDivisorNumeric(row[field], divisor)
+                  : field
+                const label = (fieldMeta[field]?.label || field) +
+                  (divisor === '1e18' ? ' (÷1e18)' : divisor === '1e6' ? ' (÷1e6)' : '')
+                return (
+                  <SeriesComponent
+                    key={field}
+                    dataKey={dataKey}
+                    name={label}
+                    fill={COLORS[i % COLORS.length]}
+                    stroke={COLORS[i % COLORS.length]}
+                  />
+                )
+              })}
             </ChartComponent>
           </ResponsiveContainer>
         </div>
