@@ -44,6 +44,52 @@ function normalizeRows(rows) {
 }
 
 /**
+ * Inject limit/offset directly into the root field's argument list.
+ * Strips any pre-existing limit:/offset: args first, then inserts before
+ * the closing ) of the first field's argument block (or adds a new block
+ * if the field has none). Uses paren-depth counting so nested args like
+ * where:{chain:"mainnet"} are handled safely.
+ */
+function injectPaginationArgs(query, limit, offset) {
+  // Strip any pre-existing limit/offset args
+  let q = query
+    .replace(/,?\s*\blimit\s*:\s*\d+/gi, '')
+    .replace(/,?\s*\boffset\s*:\s*\d+/gi, '')
+
+  const limitArg  = `limit: ${limit}`
+  const offsetArg = `offset: ${offset}`
+
+  // Find opening { of the selection set
+  const selStart = q.indexOf('{')
+  if (selStart === -1) return q
+
+  // Find the first field name after {
+  const tail = q.slice(selStart + 1)
+  const fieldMatch = tail.match(/^\s*(\w+)/)
+  if (!fieldMatch) return q
+
+  const fieldEnd = selStart + 1 + fieldMatch.index + fieldMatch[0].length
+  const afterField = q.slice(fieldEnd)
+  const trimmed = afterField.trimStart()
+  const spaces = afterField.length - trimmed.length
+
+  if (trimmed.startsWith('(')) {
+    // Find the matching ) by counting paren depth
+    let depth = 0
+    let closeIdx = -1
+    for (let i = fieldEnd + spaces; i < q.length; i++) {
+      if (q[i] === '(') depth++
+      else if (q[i] === ')') { depth--; if (depth === 0) { closeIdx = i; break } }
+    }
+    if (closeIdx === -1) return q
+    return q.slice(0, closeIdx) + ` ${limitArg} ${offsetArg}` + q.slice(closeIdx)
+  } else {
+    // No existing args — add a new argument block after the field name
+    return q.slice(0, fieldEnd) + `(${limitArg} ${offsetArg})` + q.slice(fieldEnd)
+  }
+}
+
+/**
  * Main pagination engine.
  *
  * @param {string} endpoint - Validated GraphQL endpoint URL
@@ -70,7 +116,7 @@ async function fetchAllPages(endpoint, query, variables, queryDef, settings, sig
 
   const { result_path, pagination_style, cursor_path, has_next_path } = queryDef;
 
-  async function doFetch(pageVars) {
+  async function doFetch(pageVars, pageQuery = query) {
     // Create a per-page timeout signal
     const pageAbort = new AbortController();
     const timer = setTimeout(() => pageAbort.abort(), timeoutPerPage);
@@ -86,7 +132,7 @@ async function fetchAllPages(endpoint, query, variables, queryDef, settings, sig
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, variables: pageVars }),
+        body: JSON.stringify({ query: pageQuery, variables: pageVars }),
         redirect: 'error',
         signal: combinedSignal,
       });
@@ -195,10 +241,11 @@ async function fetchAllPages(endpoint, query, variables, queryDef, settings, sig
         };
       }
 
-      const pageVars = { ...variables, first: pageSize, skip };
+      const pagedQuery = injectPaginationArgs(query, pageSize, skip);
+      const pageVars = { ...variables };
       let responseData;
       try {
-        responseData = await doFetch(pageVars);
+        responseData = await doFetch(pageVars, pagedQuery);
       } catch (e) {
         return {
           rows: null, page_count: pageCount,
