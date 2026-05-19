@@ -357,7 +357,7 @@ function ResultsView({ rows, fieldMeta, keyField }) {
         <button className={view === 'chart' ? 'active' : ''} onClick={() => setView('chart')}>Chart</button>
       </div>
       {view === 'table' && <ResultsTable rows={rows} fieldMeta={fieldMeta} keyField={keyField} colDivisors={colDivisors} onDivisorChange={setColDivisors} />}
-      {view === 'chart' && <ResultsChart rows={rows} fieldMeta={fieldMeta} keyField={keyField} colDivisors={colDivisors} />}
+      {view === 'chart' && <ResultsChart rows={rows} fieldMeta={fieldMeta} keyField={keyField} colDivisors={colDivisors} onDivisorChange={setColDivisors} />}
     </div>
   )
 }

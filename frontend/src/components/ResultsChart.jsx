@@ -38,6 +38,8 @@ const CHART_TYPES = ['bar', 'line', 'area']
 const GROUP_BY_OPTIONS = ['none', 'day', 'week', 'month']
 const Y_MODE_OPTIONS = ['raw', 'cumulative']
 const COLORS = ['#e94560', '#2196f3', '#4caf50', '#ff9800', '#9c27b0', '#00bcd4', '#ff5722', '#607d8b']
+const DIVISOR_CYCLE = ['raw', '1e6', '1e18']
+const DIVISOR_LABELS = { raw: 'raw', '1e6': '÷1e6', '1e18': '÷1e18' }
 
 function applyDivisorNumeric(value, divisor) {
   if (value === null || value === undefined || value === '') return null
@@ -126,11 +128,18 @@ function makeSeries(fields, colorOffset, yAxisIndex, seriesType, chartData, fiel
   })
 }
 
-function YAxisSelector({ label, fields, setFields, allFields, colorOffset, fieldMeta, seriesType, setSeriesType, yMode, setYMode, showYMode }) {
+function YAxisSelector({ label, fields, setFields, allFields, colorOffset, fieldMeta, seriesType, setSeriesType, yMode, setYMode, showYMode, colDivisors, onDivisorChange }) {
   const available = allFields.filter(c => !fields.includes(c))
 
   const add = (col) => { if (col) setFields(prev => [...prev, col]) }
   const remove = (col) => setFields(prev => prev.filter(f => f !== col))
+
+  const cycleDivisor = (col, e) => {
+    e.stopPropagation()
+    const cur = colDivisors?.[col] || 'raw'
+    const next = DIVISOR_CYCLE[(DIVISOR_CYCLE.indexOf(cur) + 1) % DIVISOR_CYCLE.length]
+    onDivisorChange?.({ ...(colDivisors || {}), [col]: next })
+  }
 
   return (
     <div className="form-group" style={{ margin: 0 }}>
@@ -163,6 +172,7 @@ function YAxisSelector({ label, fields, setFields, allFields, colorOffset, field
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
           {fields.map((col, i) => {
             const ci = (colorOffset + i) % COLORS.length
+            const divisor = colDivisors?.[col] || 'raw'
             return (
               <span key={col} style={{
                 display: 'inline-flex', alignItems: 'center', gap: 3,
@@ -170,6 +180,17 @@ function YAxisSelector({ label, fields, setFields, allFields, colorOffset, field
                 background: COLORS[ci], color: '#fff',
               }}>
                 {fieldMeta[col]?.label || col}
+                <button
+                  onClick={e => cycleDivisor(col, e)}
+                  title="Cycle display divisor: raw → ÷1e6 → ÷1e18"
+                  style={{
+                    background: 'none', border: 'none', color: '#fff',
+                    cursor: 'pointer', padding: '0 2px', fontSize: 9, lineHeight: 1,
+                    opacity: divisor === 'raw' ? 0.55 : 1,
+                  }}
+                >
+                  {DIVISOR_LABELS[divisor]}
+                </button>
                 <button
                   onClick={() => remove(col)}
                   style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', padding: 0, fontSize: 12, lineHeight: 1 }}
@@ -186,7 +207,7 @@ function YAxisSelector({ label, fields, setFields, allFields, colorOffset, field
 /**
  * ResultsChart — ECharts dual-axis combo chart with group-by and cumulative transforms.
  */
-export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', colDivisors = {} }) {
+export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', colDivisors = {}, onDivisorChange }) {
   const [xField, setXField] = useState('')
   const [leftFields, setLeftFields] = useState([])
   const [rightFields, setRightFields] = useState([])
@@ -340,6 +361,8 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
           yMode={leftYMode}
           setYMode={setLeftYMode}
           showYMode={isTimestampX}
+          colDivisors={colDivisors}
+          onDivisorChange={onDivisorChange}
         />
 
         {/* Divider */}
@@ -357,6 +380,8 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
           yMode={rightYMode}
           setYMode={setRightYMode}
           showYMode={isTimestampX}
+          colDivisors={colDivisors}
+          onDivisorChange={onDivisorChange}
         />
 
         {isTimestampX && (
