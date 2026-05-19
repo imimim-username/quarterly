@@ -11,7 +11,7 @@ import CompareView from './components/CompareView.jsx'
 import ResultFilters from './components/ResultFilters.jsx'
 import SchemaExplorer from './components/SchemaExplorer.jsx'
 import AddressBook from './components/AddressBook.jsx'
-import { createRun, listAddressLabels } from './api/client.js'
+import { createRun, listAddressLabels, updateQuery } from './api/client.js'
 
 export default function App() {
   const [startDate, setStartDate] = useState(null)
@@ -72,6 +72,16 @@ export default function App() {
     setCurrentRun(null)
     setSidebarRefresh(n => n + 1)
   }, [])
+
+  const handleSaveChartView = useCallback(async (view) => {
+    if (!selectedQuery?.id) return
+    const existing = Array.isArray(selectedQuery.chart_views) ? selectedQuery.chart_views : []
+    const updated = existing.some(v => v.name === view.name)
+      ? existing.map(v => v.name === view.name ? view : v)
+      : [...existing, view]
+    const { data } = await updateQuery(selectedQuery.id, { ...selectedQuery, chart_views: updated })
+    if (data) setSelectedQuery(data)
+  }, [selectedQuery])
 
   const handleRun = useCallback(async (queryDef) => {
     setRunning(true)
@@ -315,7 +325,14 @@ export default function App() {
 
               {/* Results subtabs */}
               {currentRun?.rows && currentRun.rows.length > 0 && (
-                <ResultsView rows={filteredRows} fieldMeta={fieldMeta} keyField={selectedQuery?.key_field || 'id'} addressLabels={addressLabels} />
+                <ResultsView
+                  rows={filteredRows}
+                  fieldMeta={fieldMeta}
+                  keyField={selectedQuery?.key_field || 'id'}
+                  addressLabels={addressLabels}
+                  chartViews={selectedQuery?.chart_views || []}
+                  onSaveView={selectedQuery?.id ? handleSaveChartView : undefined}
+                />
               )}
 
               {!running && !currentRun && !runError && (
@@ -369,7 +386,7 @@ export default function App() {
 /**
  * Inner component for table/chart subtabs.
  */
-function ResultsView({ rows, fieldMeta, keyField, addressLabels = [] }) {
+function ResultsView({ rows, fieldMeta, keyField, addressLabels = [], chartViews = [], onSaveView }) {
   const [view, setView] = useState('table')
   const [colDivisors, setColDivisors] = useState({})
 
@@ -380,7 +397,7 @@ function ResultsView({ rows, fieldMeta, keyField, addressLabels = [] }) {
         <button className={view === 'chart' ? 'active' : ''} onClick={() => setView('chart')}>Chart</button>
       </div>
       {view === 'table' && <ResultsTable rows={rows} fieldMeta={fieldMeta} keyField={keyField} colDivisors={colDivisors} onDivisorChange={setColDivisors} addressLabels={addressLabels} />}
-      {view === 'chart' && <ResultsChart rows={rows} fieldMeta={fieldMeta} keyField={keyField} colDivisors={colDivisors} onDivisorChange={setColDivisors} />}
+      {view === 'chart' && <ResultsChart rows={rows} fieldMeta={fieldMeta} keyField={keyField} colDivisors={colDivisors} onDivisorChange={setColDivisors} chartViews={chartViews} onSaveView={onSaveView} />}
     </div>
   )
 }

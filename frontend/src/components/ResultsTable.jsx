@@ -39,6 +39,7 @@ function applyDivisor(value, divisor) {
 export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id', colDivisors = {}, onDivisorChange, addressLabels = [] }) {
   const [sortCol, setSortCol] = useState(null)
   const [sortDir, setSortDir] = useState('asc')
+  const [copiedAddr, setCopiedAddr] = useState(null)
   const parentRef = useRef(null)
 
   const columns = useMemo(() => {
@@ -103,6 +104,13 @@ export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id', co
     }
   }
 
+  const handleAddressCopy = (rawAddr) => {
+    navigator.clipboard.writeText(rawAddr).then(() => {
+      setCopiedAddr(rawAddr)
+      setTimeout(() => setCopiedAddr(null), 1800)
+    })
+  }
+
   const formatCell = (col, value, row) => {
     if (value === null || value === undefined) return ''
 
@@ -148,6 +156,18 @@ export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id', co
       }
     }
     return String(value)
+  }
+
+  // Returns props for a <td> — adds click-to-copy and pointer cursor when a label resolves
+  const cellProps = (col, row) => {
+    const raw = String(row[col] ?? '')
+    const label = resolveAddress(raw, row?.chain || '', addressMap)
+    if (!label) return { title: raw }
+    return {
+      title: raw,
+      style: { cursor: 'pointer' },
+      onClick: () => handleAddressCopy(raw),
+    }
   }
 
   const useVirtual = sortedRows.length > VIRTUALIZE_THRESHOLD
@@ -238,7 +258,7 @@ export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id', co
                 return (
                   <tr key={vi.index} style={{ height: ROW_HEIGHT }}>
                     {columns.map(col => (
-                      <td key={col} title={String(row[col] ?? '')} style={resolveAddress(String(row[col] ?? ''), row?.chain || '', addressMap) ? { cursor: 'help' } : undefined}>{formatCell(col, row[col], row)}</td>
+                      <td key={col} {...cellProps(col, row)}>{formatCell(col, row[col], row)}</td>
                     ))}
                   </tr>
                 )
@@ -251,13 +271,32 @@ export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id', co
             sortedRows.map((row, i) => (
               <tr key={i}>
                 {columns.map(col => (
-                  <td key={col} title={String(row[col] ?? '')}>{formatCell(col, row[col], row)}</td>
+                  <td key={col} {...cellProps(col, row)}>{formatCell(col, row[col], row)}</td>
                 ))}
               </tr>
             ))
           )}
         </tbody>
       </table>
+
+      {copiedAddr && (
+        <div style={{
+          position: 'fixed',
+          bottom: 24,
+          right: 24,
+          zIndex: 9999,
+          background: 'var(--color-surface)',
+          border: '1px solid var(--color-border)',
+          borderRadius: 6,
+          padding: '8px 14px',
+          fontSize: 12,
+          color: 'var(--color-text)',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+          pointerEvents: 'none',
+        }}>
+          Copied <span style={{ fontFamily: 'monospace' }}>{copiedAddr.slice(0, 10)}…{copiedAddr.slice(-6)}</span>
+        </div>
+      )}
     </div>
   )
 }

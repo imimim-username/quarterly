@@ -207,7 +207,7 @@ function YAxisSelector({ label, fields, setFields, allFields, colorOffset, field
 /**
  * ResultsChart — ECharts dual-axis combo chart with group-by and cumulative transforms.
  */
-export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', colDivisors = {}, onDivisorChange }) {
+export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', colDivisors = {}, onDivisorChange, chartViews = [], onSaveView }) {
   const [xField, setXField] = useState('')
   const [leftFields, setLeftFields] = useState([])
   const [rightFields, setRightFields] = useState([])
@@ -217,6 +217,41 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
   const [leftYMode, setLeftYMode] = useState('raw')
   const [rightYMode, setRightYMode] = useState('raw')
   const [showLegend, setShowLegend] = useState(true)
+  const [savingView, setSavingView] = useState(false)
+
+  const loadView = (view) => {
+    if (!view) return
+    setXField(view.xField || '')
+    setLeftFields(view.leftFields || [])
+    setRightFields(view.rightFields || [])
+    setLeftType(view.leftType || 'bar')
+    setRightType(view.rightType || 'line')
+    setGroupBy(view.groupBy || 'none')
+    setLeftYMode(view.leftYMode || 'raw')
+    setRightYMode(view.rightYMode || 'raw')
+    setShowLegend(view.showLegend !== false)
+    if (view.colDivisors) onDivisorChange?.(view.colDivisors)
+  }
+
+  const handleSaveView = () => {
+    const name = window.prompt('View name:')
+    if (!name || !name.trim()) return
+    setSavingView(true)
+    const view = {
+      name: name.trim(),
+      xField,
+      leftFields,
+      rightFields,
+      leftType,
+      rightType,
+      groupBy,
+      leftYMode,
+      rightYMode,
+      showLegend,
+      colDivisors,
+    }
+    Promise.resolve(onSaveView?.(view)).finally(() => setSavingView(false))
+  }
 
   // Derive these before any early return so hook count stays constant
   const columns = Object.keys(rows?.[0] || {})
@@ -408,6 +443,40 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
           />
           Legend
         </label>
+
+        {/* Chart views */}
+        {(chartViews.length > 0 || onSaveView) && (
+          <>
+            <div style={{ width: 1, background: 'var(--color-border)', alignSelf: 'stretch', margin: '0 4px' }} />
+            {chartViews.length > 0 && (
+              <select
+                defaultValue=""
+                onChange={e => {
+                  const view = chartViews.find(v => v.name === e.target.value)
+                  if (view) loadView(view)
+                  e.target.value = ''
+                }}
+                style={{ fontSize: 12, padding: '3px 6px' }}
+                title="Load a saved view"
+              >
+                <option value="">Load view…</option>
+                {chartViews.map(v => (
+                  <option key={v.name} value={v.name}>{v.name}</option>
+                ))}
+              </select>
+            )}
+            {onSaveView && (
+              <button
+                onClick={handleSaveView}
+                disabled={savingView}
+                style={{ fontSize: 12, padding: '3px 10px' }}
+                title="Save current chart settings as a named view"
+              >
+                {savingView ? 'Saving…' : 'Save view'}
+              </button>
+            )}
+          </>
+        )}
       </div>
 
       {/* Chart */}

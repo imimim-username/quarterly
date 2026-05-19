@@ -60,7 +60,7 @@ function validateQueryBody(body) {
 }
 
 function rowToQuery(row) {
-  let variable_defs, field_meta;
+  let variable_defs, field_meta, chart_views;
   try {
     variable_defs = JSON.parse(row.variable_defs);
   } catch (e) {
@@ -71,7 +71,12 @@ function rowToQuery(row) {
   } catch (e) {
     throw { status: 500, error: 'invalid_persisted_json', message: `Failed to parse field_meta for query ${row.id}`, id: row.id };
   }
-  return { ...row, variable_defs, field_meta };
+  try {
+    chart_views = JSON.parse(row.chart_views || '[]');
+  } catch (e) {
+    chart_views = [];
+  }
+  return { ...row, variable_defs, field_meta, chart_views };
 }
 
 module.exports = function queriesRoutes(db) {
@@ -135,14 +140,15 @@ module.exports = function queriesRoutes(db) {
       field_meta = '{}',
       key_field = 'id',
       is_builtin = 0,
+      chart_views = '[]',
     } = req.body;
 
     try {
       const stmt = db.prepare(`
         INSERT INTO queries (name, description, category, gql, variable_defs, result_path,
           pagination_style, cursor_path, has_next_path, date_format, chain_mode, chain_var_name,
-          chain_field, field_meta, key_field, is_builtin, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          chain_field, field_meta, key_field, is_builtin, chart_views, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       const info = stmt.run(
         name, description, category, gql,
@@ -150,7 +156,9 @@ module.exports = function queriesRoutes(db) {
         result_path, pagination_style, cursor_path, has_next_path, date_format,
         chain_mode, chain_var_name, chain_field,
         typeof field_meta === 'string' ? field_meta : JSON.stringify(field_meta),
-        key_field, is_builtin ? 1 : 0, now, now
+        key_field, is_builtin ? 1 : 0,
+        typeof chart_views === 'string' ? chart_views : JSON.stringify(chart_views),
+        now, now
       );
       const created = db.prepare('SELECT * FROM queries WHERE id = ?').get(info.lastInsertRowid);
       res.status(201).json(rowToQuery(created));
@@ -174,6 +182,7 @@ module.exports = function queriesRoutes(db) {
       name, description, category, gql, variable_defs, result_path,
       pagination_style, cursor_path, has_next_path, date_format,
       chain_mode, chain_var_name, chain_field, field_meta, key_field, is_builtin,
+      chart_views,
     } = merged;
 
     try {
@@ -181,7 +190,7 @@ module.exports = function queriesRoutes(db) {
         UPDATE queries SET name=?, description=?, category=?, gql=?, variable_defs=?,
           result_path=?, pagination_style=?, cursor_path=?, has_next_path=?, date_format=?,
           chain_mode=?, chain_var_name=?, chain_field=?, field_meta=?, key_field=?,
-          is_builtin=?, updated_at=?
+          is_builtin=?, chart_views=?, updated_at=?
         WHERE id=?
       `).run(
         name, description, category, gql,
@@ -189,7 +198,9 @@ module.exports = function queriesRoutes(db) {
         result_path, pagination_style, cursor_path, has_next_path, date_format,
         chain_mode, chain_var_name, chain_field,
         typeof field_meta === 'string' ? field_meta : JSON.stringify(field_meta),
-        key_field, is_builtin ? 1 : 0, now,
+        key_field, is_builtin ? 1 : 0,
+        typeof chart_views === 'string' ? chart_views : JSON.stringify(chart_views || []),
+        now,
         req.params.id
       );
       const updated = db.prepare('SELECT * FROM queries WHERE id = ?').get(req.params.id);
