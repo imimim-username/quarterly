@@ -50,26 +50,25 @@ function bucketTimestamp(ts, groupBy) {
   return Number(ts)
 }
 
-function buildChartData(rows, xField, yFields, colDivisors, groupBy, yMode) {
-  if (!rows || !xField || yFields.length === 0) return []
+function buildChartData(rows, xField, allYFields, colDivisors, groupBy, yMode) {
+  if (!rows || !xField || allYFields.length === 0) return []
 
   let data
   if (groupBy === 'none') {
     data = rows.map(row => {
       const point = { x: row[xField] }
-      for (const f of yFields) point[f] = applyDivisorNumeric(row[f], colDivisors[f])
+      for (const f of allYFields) point[f] = applyDivisorNumeric(row[f], colDivisors[f])
       return point
     })
   } else {
-    // Bucket by time period — xField treated as unix seconds
     const map = new Map()
     for (const row of rows) {
       const bucket = bucketTimestamp(row[xField], groupBy)
       if (!map.has(bucket)) {
-        map.set(bucket, Object.fromEntries(yFields.map(f => [f, 0])))
+        map.set(bucket, Object.fromEntries(allYFields.map(f => [f, 0])))
       }
       const entry = map.get(bucket)
-      for (const f of yFields) {
+      for (const f of allYFields) {
         const v = applyDivisorNumeric(row[f], colDivisors[f])
         if (v !== null && !isNaN(v)) entry[f] += v
       }
@@ -79,12 +78,11 @@ function buildChartData(rows, xField, yFields, colDivisors, groupBy, yMode) {
       .map(([bucket, vals]) => ({ x: bucket, ...vals }))
   }
 
-  // Cumulative / running sum
   if (yMode === 'cumulative') {
-    const running = Object.fromEntries(yFields.map(f => [f, 0]))
+    const running = Object.fromEntries(allYFields.map(f => [f, 0]))
     data = data.map(point => {
       const p = { ...point }
-      for (const f of yFields) { running[f] += (p[f] ?? 0); p[f] = running[f] }
+      for (const f of allYFields) { running[f] += (p[f] ?? 0); p[f] = running[f] }
       return p
     })
   }
@@ -92,13 +90,89 @@ function buildChartData(rows, xField, yFields, colDivisors, groupBy, yMode) {
   return data
 }
 
+function seriesLabel(field, fieldMeta, colDivisors) {
+  const base = fieldMeta[field]?.label || field
+  const d = colDivisors[field]
+  if (d === '1e18') return `${base} (÷1e18)`
+  if (d === '1e6') return `${base} (÷1e6)`
+  return base
+}
+
+function makeSeries(fields, colorOffset, yAxisIndex, seriesType, chartData, fieldMeta, colDivisors) {
+  return fields.map((f, i) => {
+    const ci = (colorOffset + i) % COLORS.length
+    return {
+      name: seriesLabel(f, fieldMeta, colDivisors),
+      type: seriesType === 'area' ? 'line' : seriesType,
+      yAxisIndex,
+      data: chartData.map(p => p[f] ?? null),
+      areaStyle: seriesType === 'area' ? { opacity: 0.25 } : undefined,
+      smooth: seriesType !== 'bar',
+      color: COLORS[ci],
+      lineStyle: { width: 2 },
+      symbol: chartData.length > 100 ? 'none' : 'circle',
+      symbolSize: 4,
+    }
+  })
+}
+
+function YAxisSelector({ label, fields, setFields, allFields, usedByOther, colorOffset, fieldMeta, seriesType, setSeriesType }) {
+  const available = allFields.filter(c => !fields.includes(c) && !usedByOther.includes(c))
+
+  const add = (col) => { if (col) setFields(prev => [...prev, col]) }
+  const remove = (col) => setFields(prev => prev.filter(f => f !== col))
+
+  return (
+    <div className="form-group" style={{ margin: 0 }}>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        {label}
+        <select
+          value={seriesType}
+          onChange={e => setSeriesType(e.target.value)}
+          style={{ fontSize: 11, padding: '1px 4px', marginLeft: 4 }}
+        >
+          {CHART_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+      </label>
+      <select value="" onChange={e => { add(e.target.value); e.target.value = '' }}>
+        <option value="">Add column…</option>
+        {available.map(c => (
+          <option key={c} value={c}>{fieldMeta[c]?.label || c}</option>
+        ))}
+      </select>
+      {fields.length > 0 && (
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+          {fields.map((col, i) => {
+            const ci = (colorOffset + i) % COLORS.length
+            return (
+              <span key={col} style={{
+                display: 'inline-flex', alignItems: 'center', gap: 3,
+                padding: '1px 6px', fontSize: 11, borderRadius: 3,
+                background: COLORS[ci], color: '#fff',
+              }}>
+                {fieldMeta[col]?.label || col}
+                <button
+                  onClick={() => remove(col)}
+                  style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', padding: 0, fontSize: 12, lineHeight: 1 }}
+                >×</button>
+              </span>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /**
- * ResultsChart — ECharts wrapper with X/Y field selection, group-by, and cumulative modes.
+ * ResultsChart — ECharts dual-axis combo chart with group-by and cumulative transforms.
  */
 export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', colDivisors = {} }) {
   const [xField, setXField] = useState('')
-  const [yFields, setYFields] = useState([])
-  const [chartType, setChartType] = useState('bar')
+  const [leftFields, setLeftFields] = useState([])
+  const [rightFields, setRightFields] = useState([])
+  const [leftType, setLeftType] = useState('bar')
+  const [rightType, setRightType] = useState('line')
   const [groupBy, setGroupBy] = useState('none')
   const [yMode, setYMode] = useState('raw')
 
@@ -107,17 +181,13 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
   }
 
   const columns = Object.keys(rows[0] || {})
-
   const isTimestampX = xField === 'timestamp' || colDivisors[xField] === 'datetime'
-
-  const addYField = (col) => {
-    if (col && !yFields.includes(col)) setYFields(prev => [...prev, col])
-  }
-  const removeYField = (col) => setYFields(prev => prev.filter(f => f !== col))
+  const allYFields = [...leftFields, ...rightFields]
+  const hasChart = xField && allYFields.length > 0
 
   const chartData = useMemo(
-    () => buildChartData(rows, xField, yFields, colDivisors, groupBy, yMode),
-    [rows, xField, yFields, colDivisors, groupBy, yMode]
+    () => buildChartData(rows, xField, allYFields, colDivisors, groupBy, yMode),
+    [rows, xField, JSON.stringify(allYFields), colDivisors, groupBy, yMode]
   )
 
   const xLabels = useMemo(() => chartData.map(p => {
@@ -127,8 +197,22 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
     return String(p.x)
   }), [chartData, isTimestampX, groupBy])
 
+  const hasRightAxis = rightFields.length > 0
+
   const option = useMemo(() => {
-    if (!xField || yFields.length === 0) return {}
+    if (!hasChart) return {}
+
+    const allSeries = [
+      ...makeSeries(leftFields, 0, 0, leftType, chartData, fieldMeta, colDivisors),
+      ...makeSeries(rightFields, leftFields.length, 1, rightType, chartData, fieldMeta, colDivisors),
+    ]
+
+    const axisDefaults = {
+      type: 'value',
+      axisLabel: { fontSize: 11, color: 'var(--color-text-muted)' },
+      splitLine: { lineStyle: { color: 'var(--color-border)', type: 'dashed' } },
+    }
+
     return {
       tooltip: {
         trigger: 'axis',
@@ -138,10 +222,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
         borderColor: 'var(--color-border)',
       },
       legend: {
-        data: yFields.map((f, i) => ({
-          name: seriesLabel(f, fieldMeta, colDivisors),
-          itemStyle: { color: COLORS[i % COLORS.length] },
-        })),
+        data: allSeries.map(s => s.name),
         textStyle: { color: 'var(--color-text-muted)', fontSize: 11 },
         bottom: 48,
       },
@@ -158,7 +239,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
         { type: 'slider', bottom: 20, height: 20, borderColor: 'var(--color-border)' },
         { type: 'inside' },
       ],
-      grid: { top: 32, left: 60, right: 20, bottom: 90 },
+      grid: { top: 32, left: 60, right: hasRightAxis ? 60 : 20, bottom: 90 },
       xAxis: {
         type: 'category',
         data: xLabels,
@@ -166,29 +247,19 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
         axisLine: { lineStyle: { color: 'var(--color-border)' } },
         splitLine: { show: false },
       },
-      yAxis: {
-        type: 'value',
-        axisLabel: { fontSize: 11, color: 'var(--color-text-muted)' },
-        splitLine: { lineStyle: { color: 'var(--color-border)', type: 'dashed' } },
-      },
-      series: yFields.map((f, i) => ({
-        name: seriesLabel(f, fieldMeta, colDivisors),
-        type: chartType === 'area' ? 'line' : chartType,
-        data: chartData.map(p => p[f] ?? null),
-        areaStyle: chartType === 'area' ? { opacity: 0.25 } : undefined,
-        smooth: chartType !== 'bar',
-        color: COLORS[i % COLORS.length],
-        lineStyle: { width: 2 },
-        symbol: chartData.length > 100 ? 'none' : 'circle',
-        symbolSize: 4,
-      })),
+      yAxis: [
+        { ...axisDefaults, position: 'left' },
+        { ...axisDefaults, position: 'right', show: hasRightAxis, splitLine: { show: false } },
+      ],
+      series: allSeries,
     }
-  }, [xField, yFields, chartType, chartData, xLabels, colDivisors, fieldMeta])
+  }, [hasChart, leftFields, rightFields, leftType, rightType, chartData, xLabels, colDivisors, fieldMeta, hasRightAxis])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {/* Controls */}
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+
         <div className="form-group" style={{ minWidth: 160, margin: 0 }}>
           <label>X Field</label>
           <select value={xField} onChange={e => { setXField(e.target.value); setGroupBy('none') }}>
@@ -197,42 +268,39 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
           </select>
         </div>
 
-        <div className="form-group" style={{ minWidth: 160, margin: 0 }}>
-          <label>Y Fields</label>
-          <select value="" onChange={e => { addYField(e.target.value); e.target.value = '' }}>
-            <option value="">Add column…</option>
-            {columns.filter(c => !yFields.includes(c)).map(c => (
-              <option key={c} value={c}>{fieldMeta[c]?.label || c}</option>
-            ))}
-          </select>
-          {yFields.length > 0 && (
-            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
-              {yFields.map((col, i) => (
-                <span key={col} style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 3,
-                  padding: '1px 6px', fontSize: 11, borderRadius: 3,
-                  background: COLORS[i % COLORS.length], color: '#fff',
-                }}>
-                  {fieldMeta[col]?.label || col}
-                  <button
-                    onClick={() => removeYField(col)}
-                    style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', padding: 0, fontSize: 12, lineHeight: 1 }}
-                  >×</button>
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
+        {/* Divider */}
+        <div style={{ width: 1, background: 'var(--color-border)', alignSelf: 'stretch', margin: '0 4px' }} />
 
-        <div className="form-group" style={{ minWidth: 100, margin: 0 }}>
-          <label>Chart Type</label>
-          <select value={chartType} onChange={e => setChartType(e.target.value)}>
-            {CHART_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-        </div>
+        <YAxisSelector
+          label="Left Y axis"
+          fields={leftFields}
+          setFields={setLeftFields}
+          allFields={columns}
+          usedByOther={rightFields}
+          colorOffset={0}
+          fieldMeta={fieldMeta}
+          seriesType={leftType}
+          setSeriesType={setLeftType}
+        />
+
+        {/* Divider */}
+        <div style={{ width: 1, background: 'var(--color-border)', alignSelf: 'stretch', margin: '0 4px' }} />
+
+        <YAxisSelector
+          label="Right Y axis"
+          fields={rightFields}
+          setFields={setRightFields}
+          allFields={columns}
+          usedByOther={leftFields}
+          colorOffset={leftFields.length}
+          fieldMeta={fieldMeta}
+          seriesType={rightType}
+          setSeriesType={setRightType}
+        />
 
         {isTimestampX && (
           <>
+            <div style={{ width: 1, background: 'var(--color-border)', alignSelf: 'stretch', margin: '0 4px' }} />
             <div className="form-group" style={{ minWidth: 110, margin: 0 }}>
               <label>Group By</label>
               <select value={groupBy} onChange={e => setGroupBy(e.target.value)}>
@@ -250,7 +318,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
       </div>
 
       {/* Chart */}
-      {xField && yFields.length > 0 ? (
+      {hasChart ? (
         <ECharts option={option} notMerge style={{ height: 420, width: '100%' }} />
       ) : (
         <div style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>
@@ -259,12 +327,4 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
       )}
     </div>
   )
-}
-
-function seriesLabel(field, fieldMeta, colDivisors) {
-  const base = fieldMeta[field]?.label || field
-  const d = colDivisors[field]
-  if (d === '1e18') return `${base} (÷1e18)`
-  if (d === '1e6') return `${base} (÷1e6)`
-  return base
 }
