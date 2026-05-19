@@ -218,6 +218,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
   const [rightYMode, setRightYMode] = useState('raw')
   const [showLegend, setShowLegend] = useState(true)
   const [savingView, setSavingView] = useState(false)
+  const [savedMsg, setSavedMsg] = useState('')
 
   const loadView = (view) => {
     if (!view) return
@@ -233,24 +234,32 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
     if (view.colDivisors) onDivisorChange?.(view.colDivisors)
   }
 
-  const handleSaveView = () => {
+  const handleSaveView = async () => {
     const name = window.prompt('View name:')
     if (!name || !name.trim()) return
     setSavingView(true)
-    const view = {
-      name: name.trim(),
-      xField,
-      leftFields,
-      rightFields,
-      leftType,
-      rightType,
-      groupBy,
-      leftYMode,
-      rightYMode,
-      showLegend,
-      colDivisors,
+    try {
+      const view = {
+        name: name.trim(),
+        xField,
+        leftFields,
+        rightFields,
+        leftType,
+        rightType,
+        groupBy,
+        leftYMode,
+        rightYMode,
+        showLegend,
+        colDivisors,
+      }
+      const ok = await onSaveView?.(view)
+      if (ok !== false) {
+        setSavedMsg(`Saved "${name.trim()}"`)
+        setTimeout(() => setSavedMsg(''), 2500)
+      }
+    } finally {
+      setSavingView(false)
     }
-    Promise.resolve(onSaveView?.(view)).finally(() => setSavingView(false))
   }
 
   // Derive these before any early return so hook count stays constant
@@ -474,6 +483,11 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
               >
                 {savingView ? 'Saving…' : 'Save view'}
               </button>
+            )}
+            {savedMsg && (
+              <span style={{ fontSize: 11, color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>
+                ✓ {savedMsg}
+              </span>
             )}
           </>
         )}

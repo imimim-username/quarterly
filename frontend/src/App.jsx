@@ -79,8 +79,9 @@ export default function App() {
     const updated = existing.some(v => v.name === view.name)
       ? existing.map(v => v.name === view.name ? view : v)
       : [...existing, view]
-    const { data } = await updateQuery(selectedQuery.id, { ...selectedQuery, chart_views: updated })
-    if (data) setSelectedQuery(data)
+    const result = await updateQuery(selectedQuery.id, { ...selectedQuery, chart_views: updated })
+    if (result.ok && result.data) setSelectedQuery(result.data)
+    return result.ok
   }, [selectedQuery])
 
   const handleRun = useCallback(async (queryDef) => {
