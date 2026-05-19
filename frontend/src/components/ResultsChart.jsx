@@ -216,6 +216,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
   const [groupBy, setGroupBy] = useState('none')
   const [leftYMode, setLeftYMode] = useState('raw')
   const [rightYMode, setRightYMode] = useState('raw')
+  const [showLegend, setShowLegend] = useState(true)
 
   if (!rows || rows.length === 0) {
     return <div style={{ color: 'var(--color-text-muted)', padding: 16 }}>No results to chart.</div>
@@ -273,6 +274,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
         textStyle: { fontSize: 12 },
       },
       legend: {
+        show: showLegend,
         data: allSeries.map(s => s.name),
         textStyle: { fontSize: 11 },
         top: 4,
@@ -328,7 +330,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
       ],
       series: allSeries,
     }
-  }, [hasChart, xField, leftFields, rightFields, leftType, rightType, leftChartData, rightChartData, xLabels, fieldMeta, hasRightAxis])
+  }, [hasChart, xField, leftFields, rightFields, leftType, rightType, leftChartData, rightChartData, xLabels, fieldMeta, hasRightAxis, showLegend])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -392,6 +394,19 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
             </div>
           </>
         )}
+
+        {/* Divider */}
+        <div style={{ width: 1, background: 'var(--color-border)', alignSelf: 'stretch', margin: '0 4px' }} />
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, cursor: 'pointer', userSelect: 'none', margin: 0 }}>
+          <input
+            type="checkbox"
+            checked={showLegend}
+            onChange={e => setShowLegend(e.target.checked)}
+            style={{ cursor: 'pointer' }}
+          />
+          Legend
+        </label>
       </div>
 
       {/* Chart */}
