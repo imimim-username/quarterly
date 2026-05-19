@@ -218,11 +218,8 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
   const [rightYMode, setRightYMode] = useState('raw')
   const [showLegend, setShowLegend] = useState(true)
 
-  if (!rows || rows.length === 0) {
-    return <div style={{ color: 'var(--color-text-muted)', padding: 16 }}>No results to chart.</div>
-  }
-
-  const columns = Object.keys(rows[0] || {})
+  // Derive these before any early return so hook count stays constant
+  const columns = Object.keys(rows?.[0] || {})
   const isTimestampX = xField === 'timestamp' || colDivisors[xField] === 'datetime'
   const hasChart = xField && (leftFields.length > 0 || rightFields.length > 0)
 
@@ -252,6 +249,10 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
   }), [refData, isTimestampX, groupBy])
 
   const hasRightAxis = rightFields.length > 0
+
+  if (!rows || rows.length === 0) {
+    return <div style={{ color: 'var(--color-text-muted)', padding: 16 }}>No results to chart.</div>
+  }
 
   const option = useMemo(() => {
     if (!hasChart) return {}
