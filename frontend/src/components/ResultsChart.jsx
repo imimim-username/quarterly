@@ -263,20 +263,18 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
     const leftName = axisName(leftFields, fieldMeta)
     const rightName = axisName(rightFields, fieldMeta)
 
-    const axisLabelStyle = { fontSize: 11, color: 'var(--color-text-muted)', formatter: fmtAxisVal }
-    const axisNameStyle = { fontSize: 11, color: 'var(--color-text-muted)', padding: 8 }
+    const axisLabelStyle = { fontSize: 11, formatter: fmtAxisVal }
+    const axisNameStyle = { fontSize: 11, padding: 8 }
 
     return {
       tooltip: {
         trigger: 'axis',
         confine: true,
         textStyle: { fontSize: 12 },
-        backgroundColor: 'var(--color-surface)',
-        borderColor: 'var(--color-border)',
       },
       legend: {
         data: allSeries.map(s => s.name),
-        textStyle: { color: 'var(--color-text-muted)', fontSize: 11 },
+        textStyle: { fontSize: 11 },
         bottom: 48,
       },
       toolbox: {
@@ -289,7 +287,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
         },
       },
       dataZoom: [
-        { type: 'slider', bottom: 20, height: 20, borderColor: 'var(--color-border)' },
+        { type: 'slider', bottom: 20, height: 20 },
         { type: 'inside' },
       ],
       grid: { top: 40, left: hasRightAxis ? 70 : 60, right: hasRightAxis ? 70 : 20, bottom: 100 },
@@ -300,8 +298,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
         nameLocation: 'middle',
         nameGap: xLabels.length > 12 ? 50 : 36,
         nameTextStyle: axisNameStyle,
-        axisLabel: { rotate: xLabels.length > 12 ? 30 : 0, fontSize: 11, color: 'var(--color-text-muted)' },
-        axisLine: { lineStyle: { color: 'var(--color-border)' } },
+        axisLabel: { rotate: xLabels.length > 12 ? 30 : 0, fontSize: 11 },
         splitLine: { show: false },
       },
       yAxis: [
@@ -314,7 +311,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
           nameRotate: 90,
           nameTextStyle: axisNameStyle,
           axisLabel: axisLabelStyle,
-          splitLine: { lineStyle: { color: 'var(--color-border)', type: 'dashed' } },
+          splitLine: { lineStyle: { type: 'dashed' } },
         },
         {
           type: 'value',
