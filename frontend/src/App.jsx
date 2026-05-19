@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useMemo } from 'react'
+import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react'
 import EndpointBar from './components/EndpointBar.jsx'
 import DateRangePicker from './components/DateRangePicker.jsx'
 import QuerySidebar from './components/QuerySidebar.jsx'
@@ -10,7 +10,8 @@ import HistoryDrawer from './components/HistoryDrawer.jsx'
 import CompareView from './components/CompareView.jsx'
 import ResultFilters from './components/ResultFilters.jsx'
 import SchemaExplorer from './components/SchemaExplorer.jsx'
-import { createRun } from './api/client.js'
+import AddressBook from './components/AddressBook.jsx'
+import { createRun, listAddressLabels } from './api/client.js'
 
 export default function App() {
   const [startDate, setStartDate] = useState(null)
@@ -25,7 +26,13 @@ export default function App() {
   const [activeFilters, setActiveFilters] = useState({})
   const [sidebarRefresh, setSidebarRefresh] = useState(0)
   const [schemaExplorerOpen, setSchemaExplorerOpen] = useState(false)
+  const [addressBookOpen, setAddressBookOpen] = useState(false)
+  const [addressLabels, setAddressLabels] = useState([])
   const [prefillGql, setPrefillGql] = useState(null)
+
+  useEffect(() => {
+    listAddressLabels().then(({ data }) => { if (data) setAddressLabels(data) })
+  }, [])
 
   const abortRef = useRef(null)
 
@@ -174,6 +181,13 @@ export default function App() {
           onEndChange={setEndDate}
         />
         <button
+          onClick={() => setAddressBookOpen(true)}
+          style={{ flexShrink: 0, fontSize: 12, padding: '4px 10px' }}
+          title="Manage address labels"
+        >
+          Address Book
+        </button>
+        <button
           onClick={() => setHistoryOpen(o => !o)}
           disabled={!selectedQuery?.id}
           style={{ flexShrink: 0, fontSize: 12, padding: '4px 10px' }}
@@ -300,7 +314,7 @@ export default function App() {
 
               {/* Results subtabs */}
               {currentRun?.rows && currentRun.rows.length > 0 && (
-                <ResultsView rows={filteredRows} fieldMeta={fieldMeta} keyField={selectedQuery?.key_field || 'id'} />
+                <ResultsView rows={filteredRows} fieldMeta={fieldMeta} keyField={selectedQuery?.key_field || 'id'} addressLabels={addressLabels} />
               )}
 
               {!running && !currentRun && !runError && (
@@ -322,6 +336,14 @@ export default function App() {
           )}
         </div>
       </div>
+
+      {/* Address book overlay */}
+      {addressBookOpen && (
+        <AddressBook
+          onClose={() => setAddressBookOpen(false)}
+          onLabelsChange={setAddressLabels}
+        />
+      )}
 
       {/* Schema explorer overlay */}
       {schemaExplorerOpen && (
@@ -346,7 +368,7 @@ export default function App() {
 /**
  * Inner component for table/chart subtabs.
  */
-function ResultsView({ rows, fieldMeta, keyField }) {
+function ResultsView({ rows, fieldMeta, keyField, addressLabels = [] }) {
   const [view, setView] = useState('table')
   const [colDivisors, setColDivisors] = useState({})
 
@@ -356,7 +378,7 @@ function ResultsView({ rows, fieldMeta, keyField }) {
         <button className={view === 'table' ? 'active' : ''} onClick={() => setView('table')}>Table</button>
         <button className={view === 'chart' ? 'active' : ''} onClick={() => setView('chart')}>Chart</button>
       </div>
-      {view === 'table' && <ResultsTable rows={rows} fieldMeta={fieldMeta} keyField={keyField} colDivisors={colDivisors} onDivisorChange={setColDivisors} />}
+      {view === 'table' && <ResultsTable rows={rows} fieldMeta={fieldMeta} keyField={keyField} colDivisors={colDivisors} onDivisorChange={setColDivisors} addressLabels={addressLabels} />}
       {view === 'chart' && <ResultsChart rows={rows} fieldMeta={fieldMeta} keyField={keyField} colDivisors={colDivisors} onDivisorChange={setColDivisors} />}
     </div>
   )

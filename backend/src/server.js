@@ -10,6 +10,7 @@ const reportsRoutes = require('./routes/reports');
 const exportRoutes = require('./routes/export');
 const introspectRoutes = require('./routes/introspect');
 const proxyRoutes = require('./routes/proxy');
+const addressLabelsRoutes = require('./routes/addressLabels');
 
 const app = express();
 const PORT = process.env.PORT || 8790;
@@ -25,6 +26,7 @@ app.use('/api/reports', reportsRoutes(db));
 app.use('/api/export', exportRoutes(db));
 app.use('/api/introspect', introspectRoutes(db));
 app.use('/api/proxy', proxyRoutes(db));
+app.use('/api/address-labels', addressLabelsRoutes(db));
 
 // Health check
 app.get('/api/health', (req, res) => {

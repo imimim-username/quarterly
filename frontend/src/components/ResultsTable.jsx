@@ -1,6 +1,27 @@
 import React, { useState, useMemo, useRef } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 
+const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/
+
+/** Build a two-level lookup: address (lowercase) → chain → name */
+function buildAddressMap(addressLabels) {
+  const map = new Map()
+  for (const label of addressLabels) {
+    const addr = label.address.toLowerCase()
+    if (!map.has(addr)) map.set(addr, new Map())
+    map.get(addr).set(label.chain, label.name)
+  }
+  return map
+}
+
+function resolveAddress(value, chain, addressMap) {
+  if (!ADDRESS_RE.test(value)) return null
+  const chainMap = addressMap.get(value.toLowerCase())
+  if (!chainMap) return null
+  // Exact chain match first, then blank-chain fallback
+  return chainMap.get(chain) ?? chainMap.get('') ?? null
+}
+
 const ROW_HEIGHT = 28
 const VIRTUALIZE_THRESHOLD = 500
 const DIVISOR_CYCLE = ['raw', '1e6', '1e18']
@@ -35,7 +56,7 @@ function applyDivisor(value, divisor) {
  * Column order: key field first, then insertion order.
  * Numeric fields scaled via fieldMeta or per-column divisor toggle (÷1e6 / ÷1e18).
  */
-export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id', colDivisors = {}, onDivisorChange }) {
+export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id', colDivisors = {}, onDivisorChange, addressLabels = [] }) {
   const [sortCol, setSortCol] = useState(null)
   const [sortDir, setSortDir] = useState('asc')
   const parentRef = useRef(null)
@@ -72,6 +93,8 @@ export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id', co
     onDivisorChange?.({ ...colDivisors, [col]: next })
   }
 
+  const addressMap = useMemo(() => buildAddressMap(addressLabels), [addressLabels])
+
   const sortedRows = useMemo(() => {
     if (!rows) return []
     if (!sortCol) return rows
@@ -100,8 +123,12 @@ export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id', co
     }
   }
 
-  const formatCell = (col, value) => {
+  const formatCell = (col, value, row) => {
     if (value === null || value === undefined) return ''
+
+    // Address book lookup
+    const label = resolveAddress(String(value), row?.chain || '', addressMap)
+    if (label !== null) return label
 
     // Per-column toggle takes priority over fieldMeta
     const divisor = colDivisors[col]
@@ -231,7 +258,7 @@ export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id', co
                 return (
                   <tr key={vi.index} style={{ height: ROW_HEIGHT }}>
                     {columns.map(col => (
-                      <td key={col} title={String(row[col] ?? '')}>{formatCell(col, row[col])}</td>
+                      <td key={col} title={String(row[col] ?? '')} style={resolveAddress(String(row[col] ?? ''), row?.chain || '', addressMap) ? { cursor: 'help' } : undefined}>{formatCell(col, row[col], row)}</td>
                     ))}
                   </tr>
                 )
@@ -244,7 +271,7 @@ export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id', co
             sortedRows.map((row, i) => (
               <tr key={i}>
                 {columns.map(col => (
-                  <td key={col} title={String(row[col] ?? '')}>{formatCell(col, row[col])}</td>
+                  <td key={col} title={String(row[col] ?? '')}>{formatCell(col, row[col], row)}</td>
                 ))}
               </tr>
             ))

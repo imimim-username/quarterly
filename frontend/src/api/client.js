@@ -49,6 +49,12 @@ export const deleteReport = (id) => request('DELETE', `/reports/${id}`);
 export const runReport = (id, body) => request('POST', `/reports/${id}/run`, body);
 export const getReportRun = (reportRunId) => request('GET', `/reports/runs/${reportRunId}`);
 
+// Address labels
+export const listAddressLabels   = ()        => request('GET',    '/address-labels');
+export const createAddressLabel  = (body)    => request('POST',   '/address-labels', body);
+export const updateAddressLabel  = (id, body)=> request('PUT',    `/address-labels/${id}`, body);
+export const deleteAddressLabel  = (id)      => request('DELETE', `/address-labels/${id}`);
+
 // Introspect
 export const introspect = (endpoint) => request('POST', '/introspect', endpoint ? { endpoint } : {});
 
