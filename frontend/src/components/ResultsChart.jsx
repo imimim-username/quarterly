@@ -219,6 +219,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
   const [showLegend, setShowLegend] = useState(true)
   const [savingView, setSavingView] = useState(false)
   const [savedMsg, setSavedMsg] = useState('')
+  const [saveError, setSaveError] = useState('')
 
   const loadView = (view) => {
     if (!view) return
@@ -238,6 +239,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
     const name = window.prompt('View name:')
     if (!name || !name.trim()) return
     setSavingView(true)
+    setSaveError('')
     try {
       const view = {
         name: name.trim(),
@@ -254,8 +256,10 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
       }
       const ok = await onSaveView?.(view)
       if (ok !== false) {
-        setSavedMsg(`Saved "${name.trim()}"`)
+        setSavedMsg(`✓ Saved "${name.trim()}"`)
         setTimeout(() => setSavedMsg(''), 2500)
+      } else {
+        setSaveError('Save failed — is the query saved and the server running?')
       }
     } finally {
       setSavingView(false)
@@ -457,23 +461,22 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
         {(chartViews.length > 0 || onSaveView) && (
           <>
             <div style={{ width: 1, background: 'var(--color-border)', alignSelf: 'stretch', margin: '0 4px' }} />
-            {chartViews.length > 0 && (
-              <select
-                defaultValue=""
-                onChange={e => {
-                  const view = chartViews.find(v => v.name === e.target.value)
-                  if (view) loadView(view)
-                  e.target.value = ''
-                }}
-                style={{ fontSize: 12, padding: '3px 6px' }}
-                title="Load a saved view"
-              >
-                <option value="">Load view…</option>
-                {chartViews.map(v => (
-                  <option key={v.name} value={v.name}>{v.name}</option>
-                ))}
-              </select>
-            )}
+            <select
+              defaultValue=""
+              onChange={e => {
+                const view = chartViews.find(v => v.name === e.target.value)
+                if (view) loadView(view)
+                e.target.value = ''
+              }}
+              disabled={chartViews.length === 0}
+              style={{ fontSize: 12, padding: '3px 6px' }}
+              title="Load a saved view"
+            >
+              <option value="">{chartViews.length === 0 ? 'No saved views' : 'Load view…'}</option>
+              {chartViews.map(v => (
+                <option key={v.name} value={v.name}>{v.name}</option>
+              ))}
+            </select>
             {onSaveView && (
               <button
                 onClick={handleSaveView}
@@ -492,6 +495,10 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
           </>
         )}
       </div>
+
+      {saveError && (
+        <div className="error-banner" style={{ fontSize: 12 }}>{saveError}</div>
+      )}
 
       {/* Chart */}
       {hasChart ? (
