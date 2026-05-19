@@ -129,15 +129,31 @@ export default function App() {
     setHistoryOpen(false)
   }
 
-  // Filter rows by active filters (AND across all active fields)
+  // Filter rows by date range + active field chips (all ANDed)
   const filteredRows = useMemo(() => {
     if (!currentRun?.rows) return []
+    let rows = currentRun.rows
+
+    // Date range — timestamp column is always unix seconds
+    if (startDate) {
+      const s = startDate.getTime() / 1000
+      rows = rows.filter(r => r.timestamp == null || Number(r.timestamp) >= s)
+    }
+    if (endDate) {
+      const e = endDate.getTime() / 1000
+      rows = rows.filter(r => r.timestamp == null || Number(r.timestamp) <= e)
+    }
+
+    // Field chip filters
     const entries = Object.entries(activeFilters).filter(([, vals]) => vals.length > 0)
-    if (entries.length === 0) return currentRun.rows
-    return currentRun.rows.filter(row =>
-      entries.every(([field, vals]) => vals.includes(String(row[field])))
-    )
-  }, [currentRun, activeFilters])
+    if (entries.length > 0) {
+      rows = rows.filter(row =>
+        entries.every(([field, vals]) => vals.includes(String(row[field])))
+      )
+    }
+
+    return rows
+  }, [currentRun, startDate, endDate, activeFilters])
 
   const fieldMeta = typeof selectedQuery?.field_meta === 'object'
     ? selectedQuery.field_meta
@@ -263,6 +279,13 @@ export default function App() {
                   <span>{currentRun.page_count} pages</span>
                   <span>{currentRun.duration_ms}ms</span>
                   {currentRun.id && <ExportButtons runId={currentRun.id} />}
+                </div>
+              )}
+
+              {/* Warning: no timestamp field */}
+              {currentRun?.rows?.length > 0 && !('timestamp' in (currentRun.rows[0] ?? {})) && (
+                <div className="warning-banner">
+                  No <code>timestamp</code> field found in results — date range filtering will have no effect. Add <code>timestamp</code> to your query's field selection.
                 </div>
               )}
 
