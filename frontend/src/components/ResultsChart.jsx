@@ -116,8 +116,8 @@ function makeSeries(fields, colorOffset, yAxisIndex, seriesType, chartData, fiel
   })
 }
 
-function YAxisSelector({ label, fields, setFields, allFields, usedByOther, colorOffset, fieldMeta, seriesType, setSeriesType }) {
-  const available = allFields.filter(c => !fields.includes(c) && !usedByOther.includes(c))
+function YAxisSelector({ label, fields, setFields, allFields, colorOffset, fieldMeta, seriesType, setSeriesType }) {
+  const available = allFields.filter(c => !fields.includes(c))
 
   const add = (col) => { if (col) setFields(prev => [...prev, col]) }
   const remove = (col) => setFields(prev => prev.filter(f => f !== col))
@@ -276,7 +276,6 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
           fields={leftFields}
           setFields={setLeftFields}
           allFields={columns}
-          usedByOther={rightFields}
           colorOffset={0}
           fieldMeta={fieldMeta}
           seriesType={leftType}
@@ -291,7 +290,6 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
           fields={rightFields}
           setFields={setRightFields}
           allFields={columns}
-          usedByOther={leftFields}
           colorOffset={leftFields.length}
           fieldMeta={fieldMeta}
           seriesType={rightType}
