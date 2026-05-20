@@ -298,10 +298,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
 
   const hasRightAxis = rightFields.length > 0
 
-  if (!rows || rows.length === 0) {
-    return <div style={{ color: 'var(--color-text-muted)', padding: 16 }}>No results to chart.</div>
-  }
-
+  // Must be before the early return — hook count must be constant across renders
   const option = useMemo(() => {
     if (!hasChart) return {}
 
@@ -380,6 +377,10 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
       series: allSeries,
     }
   }, [hasChart, xField, leftFields, rightFields, leftType, rightType, leftChartData, rightChartData, xLabels, fieldMeta, hasRightAxis, showLegend])
+
+  if (!rows || rows.length === 0) {
+    return <div style={{ color: 'var(--color-text-muted)', padding: 16 }}>No results to chart.</div>
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
