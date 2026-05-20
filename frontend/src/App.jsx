@@ -11,6 +11,7 @@ import CompareView from './components/CompareView.jsx'
 import ResultFilters from './components/ResultFilters.jsx'
 import SchemaExplorer from './components/SchemaExplorer.jsx'
 import AddressBook from './components/AddressBook.jsx'
+import ImportExportModal from './components/ImportExportModal.jsx'
 import { createRun, listAddressLabels, updateQuery } from './api/client.js'
 
 export default function App() {
@@ -27,6 +28,7 @@ export default function App() {
   const [sidebarRefresh, setSidebarRefresh] = useState(0)
   const [schemaExplorerOpen, setSchemaExplorerOpen] = useState(false)
   const [addressBookOpen, setAddressBookOpen] = useState(false)
+  const [importExportOpen, setImportExportOpen] = useState(false)
   const [addressLabels, setAddressLabels] = useState([])
   const [prefillGql, setPrefillGql] = useState(null)
 
@@ -202,6 +204,13 @@ export default function App() {
           Address Book
         </button>
         <button
+          onClick={() => setImportExportOpen(true)}
+          style={{ flexShrink: 0, fontSize: 12, padding: '4px 10px' }}
+          title="Import or export queries, address book, and settings"
+        >
+          Import / Export
+        </button>
+        <button
           onClick={() => setHistoryOpen(o => !o)}
           disabled={!selectedQuery?.id}
           style={{ flexShrink: 0, fontSize: 12, padding: '4px 10px' }}
@@ -364,6 +373,13 @@ export default function App() {
         <AddressBook
           onClose={() => setAddressBookOpen(false)}
           onLabelsChange={setAddressLabels}
+        />
+      )}
+
+      {/* Import / Export overlay */}
+      {importExportOpen && (
+        <ImportExportModal
+          onClose={() => { setImportExportOpen(false); setSidebarRefresh(n => n + 1) }}
         />
       )}
 

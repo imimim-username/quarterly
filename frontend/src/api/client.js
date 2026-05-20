@@ -58,6 +58,11 @@ export const deleteAddressLabel  = (id)      => request('DELETE', `/address-labe
 // Introspect
 export const introspect = (endpoint) => request('POST', '/introspect', endpoint ? { endpoint } : {});
 
+// Transfer (import / export bundle)
+export const exportBundle  = (body)   => request('POST', '/transfer/export', body);
+export const previewImport = (bundle) => request('POST', '/transfer/preview', bundle);
+export const commitImport  = (body)   => request('POST', '/transfer/import', body);
+
 // Export URLs (direct download links)
 export const exportRunJson = (id) => `${BASE}/export/run/${id}/json`;
 export const exportRunCsv = (id) => `${BASE}/export/run/${id}/csv`;
