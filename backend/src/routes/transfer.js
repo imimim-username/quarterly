@@ -209,11 +209,15 @@ module.exports = function transferRoutes(db) {
           }
 
           if (decision.action === 'create_new') {
-            // Find a non-conflicting name
-            let newName = bundleQuery.name + ' (imported)';
-            let suffix = 2;
-            while (db.prepare('SELECT id FROM queries WHERE name = ?').get(newName)) {
-              newName = `${bundleQuery.name} (imported ${suffix++})`;
+            // Try the original name first (covers truly-new queries with no conflict).
+            // If taken (conflict "Create new" case) fall back to "(imported)" suffix.
+            let newName = bundleQuery.name;
+            if (db.prepare('SELECT id FROM queries WHERE name = ?').get(newName)) {
+              newName = bundleQuery.name + ' (imported)';
+              let suffix = 2;
+              while (db.prepare('SELECT id FROM queries WHERE name = ?').get(newName)) {
+                newName = `${bundleQuery.name} (imported ${suffix++})`;
+              }
             }
             const now = new Date().toISOString();
             const result = db.prepare(`
