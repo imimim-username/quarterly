@@ -157,7 +157,7 @@ export default function App() {
     if (!currentRun?.rows) return []
     let rows = currentRun.rows
 
-    // Date range — timestamp column is always unix seconds
+    // Date range — assumes timestamp column is unix seconds (standard for current queries)
     if (startDate) {
       const s = startDate.getTime() / 1000
       rows = rows.filter(r => r.timestamp == null || Number(r.timestamp) >= s)

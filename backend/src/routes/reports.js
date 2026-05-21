@@ -6,6 +6,14 @@ const { validateUrl } = require('../middleware/validateEndpoint');
 
 const router = express.Router();
 
+function parseQueryRow(row) {
+  let variable_defs, field_meta, chart_views;
+  try { variable_defs = JSON.parse(row.variable_defs || '[]'); } catch { variable_defs = []; }
+  try { field_meta = JSON.parse(row.field_meta || '{}'); } catch { field_meta = {}; }
+  try { chart_views = JSON.parse(row.chart_views || '[]'); } catch { chart_views = []; }
+  return { ...row, variable_defs, field_meta, chart_views };
+}
+
 function resolveVariables(queryDef, startDate, endDate) {
   let varDefs;
   try {
@@ -79,7 +87,7 @@ module.exports = function reportsRoutes(db) {
         ORDER BY rq.position
       `).all(req.params.id);
 
-      res.json({ ...report, queries });
+      res.json({ ...report, queries: queries.map(parseQueryRow) });
     } catch (e) {
       res.status(500).json({ error: 'db_error', message: e.message });
     }

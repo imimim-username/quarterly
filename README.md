@@ -14,8 +14,11 @@ You paste a Ponder endpoint URL into the app, pick a date range, and run named q
 - **Auto-pagination** — offset-based and cursor-based pagination handled automatically. You configure `result_path`, `pagination_style`, and cursor paths; the engine fetches all pages and aggregates the rows.
 - **Run history** — every successful query execution is stored with its parameters, row count, page count, and full result set. Load any past run without re-fetching.
 - **Cross-quarter comparison** — pin two historical runs side by side. Delta columns show absolute change and percentage change per numeric field. Rows matched by a configurable key field.
-- **Charts** — bar, line, and area charts via Recharts. Multi-chain series grouping. Export any chart as a PNG.
+- **Charts** — bar, line, and area charts via ECharts. Dual Y-axis support, group-by time buckets (day/week/month), cumulative mode, per-field decimal divisors. Save named chart configurations (views) per query and restore them in one click. Export any chart as a PNG.
+- **Filter chips** — click any column value in the results to add it as a filter chip. Address columns resolve to human-readable labels from the Address Book.
+- **Address Book** — label blockchain addresses with human-readable names, optionally scoped to a specific chain. Labels appear in result tables (click a labeled cell to copy the raw address) and in filter chips.
 - **Reports** — group queries into named reports. Run all queries in a report with a shared date range in one click. Download a ZIP of all result CSVs.
+- **Import / Export** — export any selection of queries, address book entries, and settings to a versioned JSON bundle. Import bundles on another instance with per-item conflict resolution (overwrite, create new, or skip) and field-level selection for query overwrites.
 - **Export** — download any run as JSON or CSV. CSV export applies decimal scaling from field metadata. ZIP export bundles an entire report run.
 - **Built-in Alchemix queries** — three pre-built queries for MYT deposits, Alchemist deposits, and user counts ship with the app. Field metadata (18-decimal scaling for asset/share fields, timestamp formatting) is pre-configured.
 
@@ -34,11 +37,12 @@ Node.js / Express  (127.0.0.1:8790)
   ├── export.js                   — JSON / CSV / ZIP serialisation
   └── routes/
         queries · runs · reports · export · introspect · settings
+        address-labels · transfer
               ↓  GraphQL POST (proxied)
         Ponder endpoint  (user-configured)
 ```
 
-The backend is a plain Express server that proxies GraphQL requests to whatever endpoint you configure. All state — query definitions, run history, settings — lives in a single SQLite file at `backend/data/quarterly.db`.
+The backend is a plain Express server that proxies GraphQL requests to whatever endpoint you configure. All state — query definitions, run history, address labels, settings — lives in a single SQLite file at `backend/data/quarterly.db`.
 
 The frontend is a Vite + React SPA. During development Vite proxies `/api` to the backend. In production you can serve the built frontend from the same Express process.
 
@@ -96,6 +100,7 @@ Each query stores:
 | `key_field` | Row field used to match rows in CompareView (default: `id`) |
 | `variable_defs` | JSON schema for all GraphQL variables (dates, pagination, user inputs) |
 | `field_meta` | Per-field metadata: decimal scaling, labels, timestamp type |
+| `chart_views` | Saved chart configurations (named snapshots of chart settings) |
 
 ### Variable sources
 
@@ -146,6 +151,34 @@ The engine fetches all pages automatically and concatenates the rows.
 
 ---
 
+## Address Book
+
+The Address Book maps blockchain addresses to human-readable names. Each entry has:
+
+- **address** — the 0x hex address
+- **chain** — chain name (e.g. `arbitrumOne`, `mainnet`) or blank to match any chain
+- **name** — the display label
+- **notes** — optional free-text notes
+
+Labels appear automatically in result tables wherever a cell value is a 40-character hex address. Hovering a labeled cell shows the raw address; clicking it copies the raw address to the clipboard. Filter chip labels are also resolved using the currently active chain filter as context.
+
+---
+
+## Charts
+
+The chart view renders an ECharts dual-axis combo chart from query results. Controls:
+
+- **X Field** — select any result column as the X axis
+- **Left / Right Y axes** — add columns as series; choose bar, line, or area type; toggle cumulative mode; cycle decimal divisors (raw / ÷1e6 / ÷1e18)
+- **Group By** — when X is a timestamp field, bucket rows by day, week, or month
+- **Legend** — toggle the series legend
+
+### Chart views
+
+Save the current chart configuration under a name with **Save view**. The view captures X field, Y fields, chart types, group-by, Y modes, divisors, and legend state. Load any saved view from the dropdown to restore the configuration instantly. Views are stored per query.
+
+---
+
 ## Reports
 
 A **report** is a named group of queries. When you run a report:
@@ -169,6 +202,30 @@ Select any two historical runs for the same query and click **Compare**:
 - A chart overlay mode plots both runs as series on the same chart.
 
 **Numeric field classification:** a field is treated as numeric for delta purposes if it has `decimals` set in `field_meta`, or if its value parses as a finite decimal number and is not typed as a timestamp or ID. Non-numeric fields show `—` in the delta column.
+
+---
+
+## Import / Export
+
+Use the **Import / Export** button in the top bar to move data between instances.
+
+### Export
+
+Choose what to include: individual queries (grouped by category, each individually checkable), the full Address Book, and/or Settings. Downloads a single versioned `.json` bundle file.
+
+### Import
+
+Drop or pick an export file. A preview step shows every item with a **New** or **Conflict** badge. For each item you can choose:
+
+- **Overwrite** — replace the existing record. For queries, select which field groups to overwrite (GraphQL, Variables, Display, Info, Execution) independently.
+- **Create new** — insert with an auto-suffixed name, preserving the existing record.
+- **Skip** — leave the existing record untouched.
+
+For address book entries, overwrite replaces the name (and notes) only — the address and chain are the unique key.
+
+Settings show the incoming value alongside the current value so you can decide which keys to apply.
+
+The import runs in a single database transaction — all or nothing per commit.
 
 ---
 
@@ -238,13 +295,29 @@ Accessible via `GET/PUT /api/settings`. Stored in SQLite. Configurable keys:
 |--------|------|-------------|
 | GET | `/api/reports` | List reports |
 | POST | `/api/reports` | Create report |
-| GET | `/api/reports/:id` | Report with query list |
+| GET | `/api/reports/:id` | Report with query list (JSON fields parsed) |
 | PUT | `/api/reports/:id` | Update report |
 | DELETE | `/api/reports/:id` | Delete report |
 | POST | `/api/reports/:id/run` | Run all queries; returns report_run record |
 | GET | `/api/reports/runs/:id` | Get past report run with per-query status |
 
-### Export
+### Address Labels
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/address-labels` | List all address labels |
+| GET | `/api/address-labels/:id` | Single label |
+| POST | `/api/address-labels` | Create label |
+| PUT | `/api/address-labels/:id` | Update label |
+| DELETE | `/api/address-labels/:id` | Delete label |
+
+### Transfer (Import / Export)
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/transfer/export` | Generate export bundle (body: `{ queryIds, includeAddressLabels, includeSettings }`) |
+| POST | `/api/transfer/preview` | Dry-run analysis of a bundle; returns new/conflict status per item |
+| POST | `/api/transfer/import` | Commit import with per-item decisions |
+
+### Export (run results)
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/export/run/:id/json` | Download run as `.json` |
@@ -286,14 +359,18 @@ quarterly/
 │   │   ├── middleware/
 │   │   │   └── validateEndpoint.js
 │   │   ├── migrations/
-│   │   │   └── 001_initial.js
+│   │   │   ├── 001_initial.js
+│   │   │   ├── 002_address_labels.js
+│   │   │   └── 003_chart_views.js
 │   │   └── routes/
 │   │       ├── queries.js
 │   │       ├── runs.js
 │   │       ├── reports.js
 │   │       ├── export.js
 │   │       ├── introspect.js
-│   │       └── settings.js
+│   │       ├── settings.js
+│   │       ├── addressLabels.js
+│   │       └── transfer.js
 │   ├── data/
 │   │   └── quarterly.db       SQLite database (gitignored)
 │   └── tests/
@@ -307,7 +384,10 @@ quarterly/
 │   ├── vite.config.js
 │   └── src/
 │       ├── App.jsx
-│       ├── api/client.js
+│       ├── api/
+│       │   └── client.js
+│       ├── utils/
+│       │   └── addressLabels.js
 │       └── components/
 │           ├── EndpointBar.jsx
 │           ├── DateRangePicker.jsx
@@ -316,11 +396,15 @@ quarterly/
 │           ├── VariablePanel.jsx
 │           ├── ResultsTable.jsx
 │           ├── ResultsChart.jsx
+│           ├── ResultFilters.jsx
 │           ├── ExportButtons.jsx
 │           ├── HistoryDrawer.jsx
 │           ├── CompareView.jsx
 │           ├── ReportBuilder.jsx
-│           └── ChainFilter.jsx
+│           ├── ChainFilter.jsx
+│           ├── SchemaExplorer.jsx
+│           ├── AddressBook.jsx
+│           └── ImportExportModal.jsx
 ├── queries/
 │   └── builtin/
 │       ├── myt_deposits.json
@@ -350,8 +434,7 @@ Three queries ship with the app in `queries/builtin/`. They are imported into th
 | Concern | Library |
 |---|---|
 | Frontend framework | React 18 + Vite |
-| Charts | Recharts |
-| Chart PNG export | html-to-image |
+| Charts | ECharts 5 |
 | GraphQL editor | @uiw/react-codemirror |
 | Virtual scrolling | @tanstack/react-virtual |
 | Backend | Node.js 20 + Express 4 |
