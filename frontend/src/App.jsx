@@ -181,6 +181,29 @@ export default function App() {
     return rows
   }, [currentRun, startDate, endDate, activeFilters])
 
+  // True when the current date pickers extend *beyond* what the run fetched from the
+  // server — i.e. the results may be missing data and the user should re-run.
+  // Narrowing the range is fine (client-side filter handles it), only widening matters.
+  const needsRerun = useMemo(() => {
+    if (!currentRun || running) return false
+    const runStart = currentRun.start_date ? new Date(currentRun.start_date) : null
+    const runEnd   = currentRun.end_date   ? new Date(currentRun.end_date)   : null
+
+    // Start side: need re-run if user wants data *before* what was originally fetched
+    if (runStart !== null) {
+      if (startDate === null) return true          // cleared → wants all early data
+      if (startDate < runStart) return true        // moved earlier
+    }
+
+    // End side: need re-run if user wants data *after* what was originally fetched
+    if (runEnd !== null) {
+      if (endDate === null) return true            // cleared → wants all late data
+      if (endDate > runEnd) return true            // moved later
+    }
+
+    return false
+  }, [currentRun, startDate, endDate, running])
+
   const fieldMeta = typeof selectedQuery?.field_meta === 'object'
     ? selectedQuery.field_meta
     : {}
@@ -326,6 +349,31 @@ export default function App() {
                     View query
                   </button>
                   {currentRun.id && <ExportButtons runId={currentRun.id} />}
+                </div>
+              )}
+
+              {/* Re-run nudge — date range widened beyond what was fetched */}
+              {needsRerun && selectedQuery && !running && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  padding: '6px 10px',
+                  background: 'rgba(255,152,0,0.08)',
+                  border: '1px solid var(--color-warning)',
+                  borderRadius: 4,
+                  fontSize: 12,
+                  color: 'var(--color-warning)',
+                }}>
+                  <span>⚠ Date range extended beyond the fetched window — results may be incomplete.</span>
+                  <button
+                    onClick={() => handleRun(selectedQuery)}
+                    style={{
+                      fontSize: 11, padding: '2px 10px', flexShrink: 0,
+                      borderColor: 'var(--color-warning)', color: 'var(--color-warning)',
+                      background: 'transparent',
+                    }}
+                  >
+                    ↻ Re-run
+                  </button>
                 </div>
               )}
 
