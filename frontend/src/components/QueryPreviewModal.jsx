@@ -18,9 +18,12 @@ export default function QueryPreviewModal({ run, onClose }) {
     }).catch(() => {})
   }, [])
 
-  const gql       = run?.gql_used   ?? null   // present on fresh runs
-  const variables = run?.variables_base ?? {}
-  const endpoint  = run?.endpoint   ?? '—'
+  const gql       = run?.gql_used      ?? null   // present on fresh runs
+  // variables_used includes auto-injected timestamp args; fall back to variables_base
+  // for historical runs loaded from history (neither field will be present there either,
+  // but variables_base is at least always populated from the DB).
+  const variables = run?.variables_used ?? run?.variables_base ?? {}
+  const endpoint  = run?.endpoint      ?? '—'
   const varsJson  = JSON.stringify(variables, null, 2)
 
   // Backdrop click closes the modal

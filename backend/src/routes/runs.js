@@ -221,9 +221,11 @@ module.exports = function runsRoutes(db) {
       start_date: start_date || null,
       end_date: end_date || null,
       variables_base,
-      // gql_used: the actual query sent to the endpoint (may differ from queryDef.gql
-      // when auto date-filter injection rewrote it). Not persisted to the DB.
+      // gql_used / variables_used: the actual query and variables sent to the endpoint
+      // (may differ from queryDef.gql / variables_base when auto date-filter injection
+      // rewrote the query and added timestamp_gte / timestamp_lte). Not persisted to DB.
       gql_used: gqlToRun,
+      variables_used: varsToRun,
       rows,
       row_count: rows ? rows.length : 0,
       page_count,
