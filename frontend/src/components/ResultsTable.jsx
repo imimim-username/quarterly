@@ -31,6 +31,12 @@ function applyDivisor(value, divisor) {
   }
 }
 
+function fmtNum(n) {
+  const abs = Math.abs(n)
+  if (abs >= 1e6) return n.toLocaleString(undefined, { maximumFractionDigits: 2 })
+  return n.toFixed(4).replace(/\.?0+$/, '')
+}
+
 /**
  * ResultsTable — sortable table with virtualisation for large datasets.
  * Column order: key field first, then insertion order.
@@ -41,6 +47,17 @@ export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id', co
   const [sortDir, setSortDir] = useState('asc')
   const [copiedAddr, setCopiedAddr] = useState(null)
   const parentRef = useRef(null)
+
+  // A) Full-text search
+  const [searchText, setSearchText] = useState('')
+
+  // B) Column visibility
+  const [hiddenCols, setHiddenCols] = useState(new Set())
+  const [colPanelOpen, setColPanelOpen] = useState(false)
+
+  // D) Copy menu
+  const [copyMenuOpen, setCopyMenuOpen] = useState(false)
+  const [copyLabel, setCopyLabel] = useState('Copy ▾')
 
   const columns = useMemo(() => {
     if (!rows || rows.length === 0) return []
@@ -60,6 +77,9 @@ export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id', co
     }
     return cols
   }, [rows, keyField])
+
+  // B) Visible columns filtered by hiddenCols
+  const visibleColumns = useMemo(() => columns.filter(c => !hiddenCols.has(c)), [columns, hiddenCols])
 
   // Columns eligible for divisor toggle: integer-only, not timestamp
   const integerCols = useMemo(
@@ -94,6 +114,43 @@ export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id', co
       return sortDir === 'asc' ? as.localeCompare(bs) : bs.localeCompare(as)
     })
   }, [rows, sortCol, sortDir])
+
+  // A) Apply full-text search filter after sort
+  const displayRows = useMemo(() => {
+    if (!searchText) return sortedRows
+    const lower = searchText.toLowerCase()
+    return sortedRows.filter(row =>
+      columns.some(col => {
+        const v = row[col]
+        return v != null && String(v).toLowerCase().includes(lower)
+      })
+    )
+  }, [sortedRows, searchText, columns])
+
+  // C) Stats bar: numeric columns (non-timestamp) with at least one parseable value
+  const statCols = useMemo(() => {
+    if (displayRows.length === 0) return []
+    return visibleColumns
+      .filter(col => {
+        const meta = fieldMeta[col]
+        if (meta && (meta.type === 'unix_seconds' || meta.type === 'unix_ms')) return false
+        if (col === 'timestamp') return false
+        return true
+      })
+      .map(col => {
+        const nums = displayRows
+          .map(r => r[col])
+          .filter(v => v != null && v !== '' && !isNaN(Number(v)))
+          .map(Number)
+        if (nums.length === 0) return null
+        const sum = nums.reduce((a, b) => a + b, 0)
+        const mean = sum / nums.length
+        const min = Math.min(...nums)
+        const max = Math.max(...nums)
+        return { col, sum, mean, min, max }
+      })
+      .filter(Boolean)
+  }, [displayRows, visibleColumns, fieldMeta])
 
   const handleSort = (col) => {
     if (sortCol === col) {
@@ -170,10 +227,35 @@ export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id', co
     }
   }
 
-  const useVirtual = sortedRows.length > VIRTUALIZE_THRESHOLD
+  // D) Copy handlers
+  const handleCopy = (format) => {
+    const headers = visibleColumns
+    const rowsData = displayRows.map(r => headers.map(h => String(r[h] ?? '')))
+    let text = ''
+    if (format === 'Markdown') {
+      const sep = headers.map(() => '----').join(' | ')
+      text = `| ${headers.join(' | ')} |\n| ${sep} |\n`
+      text += rowsData.map(row => `| ${row.join(' | ')} |`).join('\n')
+    } else if (format === 'HTML') {
+      text = '<table>\n<thead>\n<tr>'
+      text += headers.map(h => `<th>${h}</th>`).join('')
+      text += '</tr>\n</thead>\n<tbody>\n'
+      text += rowsData.map(row => `<tr>${row.map(v => `<td>${v}</td>`).join('')}</tr>`).join('\n')
+      text += '\n</tbody>\n</table>'
+    } else if (format === 'TSV') {
+      text = [headers.join('\t'), ...rowsData.map(row => row.join('\t'))].join('\n')
+    }
+    navigator.clipboard.writeText(text).then(() => {
+      setCopyLabel('Copied!')
+      setCopyMenuOpen(false)
+      setTimeout(() => setCopyLabel('Copy ▾'), 1500)
+    })
+  }
+
+  const useVirtual = displayRows.length > VIRTUALIZE_THRESHOLD
 
   const rowVirtualizer = useVirtualizer({
-    count: sortedRows.length,
+    count: displayRows.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => ROW_HEIGHT,
     enabled: useVirtual,
@@ -184,100 +266,221 @@ export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id', co
   }
 
   return (
-    <div
-      ref={parentRef}
-      className="results-table-container"
-      style={{ maxHeight: 500, overflowY: 'auto' }}
-    >
-      <table className="results-table">
-        <thead>
-          <tr>
-            {columns.map(col => {
-              const divisor = colDivisors[col] || 'raw'
-              return (
-                <th key={col} onClick={() => handleSort(col)}>
-                  {fieldMeta[col]?.label || col}
-                  {sortCol === col ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
-                  {col === 'timestamp' && (
-                    <button
-                      onClick={e => {
-                        e.stopPropagation()
-                        const cur = colDivisors['timestamp'] || 'raw'
-                        onDivisorChange?.({ ...colDivisors, timestamp: cur === 'datetime' ? 'raw' : 'datetime' })
-                      }}
-                      title="Toggle datetime formatting"
-                      style={{
-                        marginLeft: 5,
-                        fontSize: 10,
-                        padding: '1px 5px',
-                        background: divisor === 'datetime' ? 'var(--color-accent)' : 'var(--color-surface2)',
-                        border: '1px solid ' + (divisor === 'datetime' ? 'var(--color-accent)' : 'var(--color-border)'),
-                        color: divisor === 'datetime' ? '#fff' : 'var(--color-text-muted)',
-                        borderRadius: 3,
-                        cursor: 'pointer',
-                        lineHeight: 1.4,
-                        verticalAlign: 'middle',
-                      }}
-                    >
-                      {divisor === 'datetime' ? 'datetime' : 'raw'}
-                    </button>
-                  )}
-                  {integerCols.has(col) && (
-                    <button
-                      onClick={e => cycleDivisor(col, e)}
-                      title="Cycle display divisor: raw → ÷1e6 → ÷1e18"
-                      style={{
-                        marginLeft: 5,
-                        fontSize: 10,
-                        padding: '1px 5px',
-                        background: divisor === 'raw' ? 'var(--color-surface2)' : 'var(--color-accent)',
-                        border: '1px solid ' + (divisor === 'raw' ? 'var(--color-border)' : 'var(--color-accent)'),
-                        color: divisor === 'raw' ? 'var(--color-text-muted)' : '#fff',
-                        borderRadius: 3,
-                        cursor: 'pointer',
-                        lineHeight: 1.4,
-                        verticalAlign: 'middle',
-                      }}
-                    >
-                      {divisor === 'raw' ? 'raw' : divisor === '1e6' ? '÷1e6' : '÷1e18'}
-                    </button>
-                  )}
-                </th>
-              )
-            })}
-          </tr>
-        </thead>
-        <tbody>
-          {useVirtual ? (
-            <>
-              <tr style={{ height: rowVirtualizer.getVirtualItems()[0]?.start || 0 }}>
-                <td colSpan={columns.length} style={{ padding: 0, border: 'none' }} />
-              </tr>
-              {rowVirtualizer.getVirtualItems().map(vi => {
-                const row = sortedRows[vi.index]
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
+      {/* A) Search bar */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', marginBottom: 4 }}>
+        <div style={{ flex: 1, position: 'relative' }}>
+          <input
+            placeholder="Search rows…"
+            value={searchText}
+            onChange={e => setSearchText(e.target.value)}
+            style={{ fontSize: 12, padding: '3px 8px', width: '100%', boxSizing: 'border-box' }}
+          />
+        </div>
+        {searchText && (
+          <button onClick={() => setSearchText('')} style={{ fontSize: 12, padding: '1px 6px', flexShrink: 0 }}>×</button>
+        )}
+        {searchText && (
+          <span style={{ fontSize: 11, color: 'var(--color-text-muted)', flexShrink: 0, whiteSpace: 'nowrap' }}>
+            {displayRows.length} of {sortedRows.length} rows
+          </span>
+        )}
+        {/* B) Column visibility button */}
+        <div style={{ position: 'relative', flexShrink: 0 }}>
+          <button
+            onClick={() => { setColPanelOpen(v => !v); setCopyMenuOpen(false) }}
+            title="Column visibility"
+            style={{ fontSize: 13, padding: '1px 6px' }}
+          >
+            ⚙
+          </button>
+          {colPanelOpen && (
+            <div style={{
+              position: 'absolute',
+              top: '100%',
+              right: 0,
+              maxHeight: 250,
+              overflowY: 'auto',
+              background: 'var(--color-surface)',
+              border: '1px solid var(--color-border)',
+              borderRadius: 4,
+              zIndex: 10,
+              minWidth: 180,
+              padding: '4px 0',
+            }}>
+              <div style={{ padding: '2px 8px' }}>
+                <button
+                  onClick={() => setHiddenCols(new Set())}
+                  style={{ fontSize: 11, padding: '1px 6px', width: '100%' }}
+                >
+                  Show all
+                </button>
+              </div>
+              <hr style={{ margin: '4px 0', borderColor: 'var(--color-border)' }} />
+              {columns.map(col => (
+                <label key={col} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 10px', fontSize: 12, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={!hiddenCols.has(col)}
+                    onChange={() => {
+                      setHiddenCols(prev => {
+                        const next = new Set(prev)
+                        if (next.has(col)) next.delete(col)
+                        else next.add(col)
+                        return next
+                      })
+                    }}
+                  />
+                  {col}
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+        {/* D) Copy menu button */}
+        <div style={{ position: 'relative', flexShrink: 0 }}>
+          <button
+            onClick={() => { setCopyMenuOpen(v => !v); setColPanelOpen(false) }}
+            style={{ fontSize: 12, padding: '1px 6px' }}
+          >
+            {copyLabel}
+          </button>
+          {copyMenuOpen && (
+            <div style={{
+              position: 'absolute',
+              top: '100%',
+              right: 0,
+              background: 'var(--color-surface)',
+              border: '1px solid var(--color-border)',
+              borderRadius: 4,
+              zIndex: 10,
+              minWidth: 120,
+              padding: '4px 0',
+            }}>
+              {['Markdown', 'HTML', 'TSV'].map(fmt => (
+                <div
+                  key={fmt}
+                  onClick={() => handleCopy(fmt)}
+                  style={{ padding: '4px 12px', fontSize: 12, cursor: 'pointer' }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'var(--color-surface2)'}
+                  onMouseLeave={e => e.currentTarget.style.background = ''}
+                >
+                  {fmt}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Table container */}
+      <div
+        ref={parentRef}
+        className="results-table-container"
+        style={{ maxHeight: 500, overflowY: 'auto' }}
+      >
+        <table className="results-table">
+          <thead>
+            <tr>
+              {visibleColumns.map(col => {
+                const divisor = colDivisors[col] || 'raw'
                 return (
-                  <tr key={vi.index} style={{ height: ROW_HEIGHT }}>
-                    {columns.map(col => (
-                      <td key={col} {...cellProps(col, row)}>{formatCell(col, row[col], row)}</td>
-                    ))}
-                  </tr>
+                  <th key={col} onClick={() => handleSort(col)}>
+                    {fieldMeta[col]?.label || col}
+                    {sortCol === col ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+                    {col === 'timestamp' && (
+                      <button
+                        onClick={e => {
+                          e.stopPropagation()
+                          const cur = colDivisors['timestamp'] || 'raw'
+                          onDivisorChange?.({ ...colDivisors, timestamp: cur === 'datetime' ? 'raw' : 'datetime' })
+                        }}
+                        title="Toggle datetime formatting"
+                        style={{
+                          marginLeft: 5,
+                          fontSize: 10,
+                          padding: '1px 5px',
+                          background: divisor === 'datetime' ? 'var(--color-accent)' : 'var(--color-surface2)',
+                          border: '1px solid ' + (divisor === 'datetime' ? 'var(--color-accent)' : 'var(--color-border)'),
+                          color: divisor === 'datetime' ? '#fff' : 'var(--color-text-muted)',
+                          borderRadius: 3,
+                          cursor: 'pointer',
+                          lineHeight: 1.4,
+                          verticalAlign: 'middle',
+                        }}
+                      >
+                        {divisor === 'datetime' ? 'datetime' : 'raw'}
+                      </button>
+                    )}
+                    {integerCols.has(col) && (
+                      <button
+                        onClick={e => cycleDivisor(col, e)}
+                        title="Cycle display divisor: raw → ÷1e6 → ÷1e18"
+                        style={{
+                          marginLeft: 5,
+                          fontSize: 10,
+                          padding: '1px 5px',
+                          background: divisor === 'raw' ? 'var(--color-surface2)' : 'var(--color-accent)',
+                          border: '1px solid ' + (divisor === 'raw' ? 'var(--color-border)' : 'var(--color-accent)'),
+                          color: divisor === 'raw' ? 'var(--color-text-muted)' : '#fff',
+                          borderRadius: 3,
+                          cursor: 'pointer',
+                          lineHeight: 1.4,
+                          verticalAlign: 'middle',
+                        }}
+                      >
+                        {divisor === 'raw' ? 'raw' : divisor === '1e6' ? '÷1e6' : '÷1e18'}
+                      </button>
+                    )}
+                  </th>
                 )
               })}
-              <tr style={{ height: rowVirtualizer.getTotalSize() - (rowVirtualizer.getVirtualItems().slice(-1)[0]?.end || 0) }}>
-                <td colSpan={columns.length} style={{ padding: 0, border: 'none' }} />
-              </tr>
-            </>
-          ) : (
-            sortedRows.map((row, i) => (
-              <tr key={i}>
-                {columns.map(col => (
-                  <td key={col} {...cellProps(col, row)}>{formatCell(col, row[col], row)}</td>
-                ))}
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
+            </tr>
+          </thead>
+          <tbody>
+            {useVirtual ? (
+              <>
+                <tr style={{ height: rowVirtualizer.getVirtualItems()[0]?.start || 0 }}>
+                  <td colSpan={visibleColumns.length} style={{ padding: 0, border: 'none' }} />
+                </tr>
+                {rowVirtualizer.getVirtualItems().map(vi => {
+                  const row = displayRows[vi.index]
+                  return (
+                    <tr key={vi.index} style={{ height: ROW_HEIGHT }}>
+                      {visibleColumns.map(col => (
+                        <td key={col} {...cellProps(col, row)}>{formatCell(col, row[col], row)}</td>
+                      ))}
+                    </tr>
+                  )
+                })}
+                <tr style={{ height: rowVirtualizer.getTotalSize() - (rowVirtualizer.getVirtualItems().slice(-1)[0]?.end || 0) }}>
+                  <td colSpan={visibleColumns.length} style={{ padding: 0, border: 'none' }} />
+                </tr>
+              </>
+            ) : (
+              displayRows.map((row, i) => (
+                <tr key={i}>
+                  {visibleColumns.map(col => (
+                    <td key={col} {...cellProps(col, row)}>{formatCell(col, row[col], row)}</td>
+                  ))}
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* C) Stats bar */}
+      {statCols.length > 0 && displayRows.length > 0 && (
+        <div style={{ display: 'flex', gap: 8, overflowX: 'auto', padding: '6px 0', fontSize: 11 }}>
+          {statCols.map(({ col, sum, mean, min, max }) => (
+            <div key={col} style={{ flexShrink: 0, background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 4, padding: '4px 8px', fontFamily: 'var(--font-mono)' }}>
+              <div style={{ color: 'var(--color-text-muted)', marginBottom: 2 }}>{col}</div>
+              <div>Σ {fmtNum(sum)} · avg {fmtNum(mean)} · min {fmtNum(min)} · max {fmtNum(max)}</div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {copiedAddr && (
         <div style={{

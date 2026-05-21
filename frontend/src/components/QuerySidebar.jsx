@@ -32,9 +32,14 @@ export default function QuerySidebar({
   onNewQuery,
   onRefresh,
   refreshTrigger,
+  onCloneQuery = () => {},
 }) {
   const [queries, setQueries] = useState([])
   const [loading, setLoading] = useState(true)
+  // A) Search/filter state
+  const [search, setSearch] = useState('')
+  // B) Clone hover state
+  const [hoveredId, setHoveredId] = useState(null)
 
   const fetchQueries = useCallback(async () => {
     setLoading(true)
@@ -69,9 +74,14 @@ export default function QuerySidebar({
     if (refreshTrigger > 0) fetchQueries()
   }, [refreshTrigger, fetchQueries])
 
-  // Group by category
+  // A) Filter before grouping
+  const filtered = search
+    ? queries.filter(q => q.name.toLowerCase().includes(search.toLowerCase()))
+    : queries
+
+  // Group filtered queries by category
   const grouped = {}
-  for (const q of queries) {
+  for (const q of filtered) {
     const cat = q.category || 'General'
     if (!grouped[cat]) grouped[cat] = []
     grouped[cat].push(q)
@@ -84,15 +94,25 @@ export default function QuerySidebar({
         <button onClick={fetchQueries} title="Refresh query list" style={{ padding: '4px 8px' }}>↻</button>
       </div>
 
+      {/* A) Search input */}
+      <div style={{ padding: '4px 8px', borderBottom: '1px solid var(--color-border)' }}>
+        <input
+          placeholder="Filter queries…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{ width: '100%', fontSize: 12, padding: '3px 6px', boxSizing: 'border-box' }}
+        />
+      </div>
+
       <div style={{ overflowY: 'auto', flex: 1 }}>
         {loading && (
           <div style={{ padding: 16, color: 'var(--color-text-muted)', fontSize: 13 }}>
             Loading…
           </div>
         )}
-        {!loading && queries.length === 0 && (
+        {!loading && filtered.length === 0 && (
           <div style={{ padding: 16, color: 'var(--color-text-muted)', fontSize: 13 }}>
-            No queries yet.
+            {search ? 'No matching queries.' : 'No queries yet.'}
           </div>
         )}
         {Object.entries(grouped).map(([category, qs]) => (
@@ -103,16 +123,31 @@ export default function QuerySidebar({
                 key={q.id}
                 className={`sidebar-item ${selectedQueryId === q.id ? 'active' : ''}`}
                 onClick={() => onSelectQuery(q)}
+                onMouseEnter={() => setHoveredId(q.id)}
+                onMouseLeave={() => setHoveredId(null)}
+                style={{ display: 'flex', alignItems: 'center' }}
               >
-                <div className="sidebar-item-name">
-                  {q.is_builtin ? '🔒 ' : ''}{q.name}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="sidebar-item-name">
+                    {q.is_builtin ? '🔒 ' : ''}{q.name}
+                  </div>
+                  <div className="sidebar-item-meta">
+                    {q.last_run_at
+                      ? `Last run: ${new Date(q.last_run_at).toLocaleDateString()}`
+                      : 'Never run'}
+                    {q.last_row_count != null ? ` · ${q.last_row_count} rows` : ''}
+                  </div>
                 </div>
-                <div className="sidebar-item-meta">
-                  {q.last_run_at
-                    ? `Last run: ${new Date(q.last_run_at).toLocaleDateString()}`
-                    : 'Never run'}
-                  {q.last_row_count != null ? ` · ${q.last_row_count} rows` : ''}
-                </div>
+                {/* B) Clone button on hover */}
+                {hoveredId === q.id && (
+                  <button
+                    title="Duplicate query"
+                    onClick={e => { e.stopPropagation(); onCloneQuery(q) }}
+                    style={{ fontSize: 11, padding: '1px 5px', marginLeft: 'auto', flexShrink: 0, opacity: 0.7 }}
+                  >
+                    ⧉
+                  </button>
+                )}
               </div>
             ))}
           </div>
