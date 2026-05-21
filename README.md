@@ -84,13 +84,66 @@ This starts both servers concurrently:
 
 ## Walkthrough for new users
 
-Here's a typical workflow from first run to a chart with filtered data.
+Here's a typical workflow from connecting an endpoint to a saved, charted query.
 
-### 1. Run a query
+### 1. Add and verify your endpoint
+
+Paste your Ponder GraphQL endpoint URL into the bar at the top of the page. The dot to the left of the bar shows connection status:
+
+- **Grey** — not yet tested
+- **Green** — endpoint responded successfully
+- **Red** — endpoint is unreachable or returned an error
+
+Click the **Ping** button (or press Enter in the endpoint bar) to test the connection. The latency in milliseconds is shown on success. Fix the URL and retry if you get red.
+
+### 2. Explore the schema
+
+Once the endpoint is live, click **Introspect** (in the Query Editor toolbar) to fetch the GraphQL schema. This opens the **Schema Explorer**, which lists all available query fields and their argument types. Browse it to understand what data is available and what field names to use in your queries.
+
+### 3. Create a query
+
+Click the **＋ New** button at the bottom of the left sidebar to open a blank query form. Fill in:
+
+- **Name** — a short, descriptive name (shows in the sidebar)
+- **Category** — optional grouping label (e.g. "Deposits", "General")
+- **GraphQL** — paste or write your query in the editor. Use the Schema Explorer for field names. If you want date-range filtering, declare your date variables here (e.g. `$start: BigInt`, `$end: BigInt`)
+
+#### Variable definitions
+
+For each GraphQL variable your query uses, add a row in the **Variables** panel below the editor:
+
+| Field | What to set |
+|---|---|
+| Name | Must match the `$variable` name in your GQL exactly |
+| Source | `global_start` / `global_end` for date pickers; `user` for manual input; `none` for a fixed default |
+| Default | Starting value (required for `user` and `none` sources) |
+
+#### Execution settings
+
+- **Result path** — dotted path from the response root to the array of rows (e.g. `data.deposits`)
+- **Pagination** — choose `offset` (Ponder's `first`/`skip`) or `cursor` (Ponder's `first`/`after` + `hasNextPage`), or `none` for a single-page query
+- **Date format** — `unix_seconds` for most Ponder timestamps; `unix_ms` or `iso8601` if your schema uses those
+- **Chain mode** — `variable` to inject the selected chain as a GraphQL variable; `filter` to fetch all chains and filter client-side; `none` if your query isn't chain-specific
+
+Click **Save** when done. The query appears in the sidebar immediately.
+
+#### Field metadata (optional but recommended)
+
+After saving, open the **Field Meta** tab to configure per-column display:
+
+- **Label** — human-readable column header shown in the table and chart
+- **Decimals** — number of decimal places to scale by (e.g. `18` for ETH, `6` for USDC)
+- **Type** — set to `unix_seconds` or `unix_ms` to have a column formatted as a date
+
+### 4. Run a query
 
 The left sidebar lists all saved queries grouped by category. Click any query to select it — its definition loads into the editor on the right. Set a date range at the top if the query uses date variables, then click **Run**. The results appear in the **Results** tab as a table.
 
-### 2. Filter the data
+### 5. Filter the data
+
+The left sidebar lists all saved queries grouped by category. Click any query to select it — its definition loads into the editor on the right. Set a date range at the top if the query uses date variables, then click **Run**. The results appear in the **Results** tab as a table.
+
+### 6. Filter the data
 
 Above the table you'll see **filter chips** for each column that has repeated values. Click a chip value to activate it — results narrow to only rows matching that value. Common starting point: click a **chain** chip to focus on one chain.
 
@@ -98,13 +151,13 @@ When you filter by a single chain, address columns in the remaining filter chips
 
 Click additional chip values to add more filters. Click an active value again to remove it.
 
-### 3. Read the table
+### 7. Read the table
 
 - **Timestamp fields** are displayed as formatted local dates.
 - **Decimal fields** (assets, shares, balances) are scaled by the field's configured divisor — so an 18-decimal token value like `1000000000000000000` displays as `1.0`.
 - **Address fields** that have a matching Address Book entry show the label instead of the raw address. Hover to see the raw address; click to copy it to the clipboard.
 
-### 4. Cycle number formats
+### 8. Cycle number formats
 
 For numeric columns you can click the small divisor label on a column chip (or in a chart Y-axis selector) to cycle through display formats:
 
@@ -112,7 +165,7 @@ For numeric columns you can click the small divisor label on a column chip (or i
 - **÷1e6** — divide by 1,000,000 (useful for USDC and other 6-decimal tokens)
 - **÷1e18** — divide by 10^18 (useful for ETH, DAI, and most ERC-20 tokens)
 
-### 5. View a chart
+### 9. View a chart
 
 Click the **Chart** tab. If the query has a saved chart view, open the **Load view** dropdown and select it — the chart will configure itself automatically with the right X field, Y fields, chart type, and divisors.
 
@@ -127,7 +180,7 @@ To build a chart from scratch:
 
 Use the ECharts toolbar (top-right of the chart) to zoom, reset, or download the chart as a PNG.
 
-### 6. Compare two runs
+### 10. Compare two runs
 
 Run the same query for a different date range (or after new data has been indexed). Open the **History** drawer, pin two runs, then click **Compare**. The Compare view matches rows by the query's key field and shows a delta column with absolute and percentage change for every numeric field.
 
