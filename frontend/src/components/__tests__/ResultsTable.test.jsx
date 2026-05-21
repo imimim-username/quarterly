@@ -14,8 +14,8 @@ vi.mock('@tanstack/react-virtual', () => ({
 }))
 
 vi.mock('../../utils/addressLabels.js', () => ({
-  buildAddressMap: () => ({}),
-  resolveAddress: (_map, addr) => null,
+  buildAddressMap: () => new Map(),
+  resolveAddress: (_value, _chain, _map) => null,
 }))
 
 import ResultsTable from '../ResultsTable.jsx'
@@ -76,17 +76,23 @@ describe('ResultsTable', () => {
     expect(screen.queryByText('Alice')).not.toBeInTheDocument()
   })
 
-  it('stats bar shows sum/avg/min/max for numeric column', () => {
-    const { container } = render(<ResultsTable rows={ROWS} />)
+  it('stats bar shows column picker; selecting a column renders sum/avg/min/max', () => {
+    render(<ResultsTable rows={ROWS} />)
 
-    // sum = 600, avg = 200, min = 100, max = 300
-    // Stats bar uses fmtNum. The text is split across sibling nodes inside a <div>,
-    // so we inspect the container's full textContent.
-    const statsBar = container.querySelector('[style*="overflow-x: auto"][style*="padding: 6px"]')
-    expect(statsBar).toBeTruthy()
-    const statsText = statsBar.textContent
-    expect(statsText).toMatch(/amount/)
-    // Σ, avg, min, max labels appear in the bar
+    // The "Σ Stats:" label is always visible when there are numeric columns
+    expect(screen.getByText('Σ Stats:')).toBeInTheDocument()
+
+    // The picker is a <select> with a default empty option
+    const picker = screen.getByRole('combobox')
+    expect(picker).toBeInTheDocument()
+    expect(picker.value).toBe('')
+
+    // Pick the "amount" column
+    fireEvent.change(picker, { target: { value: 'amount' } })
+
+    // sum=600, avg=200, min=100, max=300 — all appear in the stats line
+    // Σ Stats text is rendered together in a sibling div
+    const statsText = picker.parentElement.textContent
     expect(statsText).toMatch(/Σ/)
     expect(statsText).toMatch(/avg/)
     expect(statsText).toMatch(/min/)

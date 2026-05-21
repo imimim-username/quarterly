@@ -55,6 +55,9 @@ export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id', co
   const [hiddenCols, setHiddenCols] = useState(new Set())
   const [colPanelOpen, setColPanelOpen] = useState(false)
 
+  // C) Stats column picker
+  const [statsCol, setStatsCol] = useState(null)
+
   // D) Copy menu
   const [copyMenuOpen, setCopyMenuOpen] = useState(false)
   const [copyLabel, setCopyLabel] = useState('Copy ▾')
@@ -127,30 +130,44 @@ export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id', co
     )
   }, [sortedRows, searchText, columns])
 
-  // C) Stats bar: numeric columns (non-timestamp) with at least one parseable value
-  const statCols = useMemo(() => {
+  // C) Stats bar: candidate numeric columns for picker
+  const statCandidateCols = useMemo(() => {
     if (displayRows.length === 0) return []
-    return visibleColumns
-      .filter(col => {
-        const meta = fieldMeta[col]
-        if (meta && (meta.type === 'unix_seconds' || meta.type === 'unix_ms')) return false
-        if (col === 'timestamp') return false
-        return true
+    return visibleColumns.filter(col => {
+      const meta = fieldMeta[col]
+      if (meta && (meta.type === 'unix_seconds' || meta.type === 'unix_ms')) return false
+      if (col === 'timestamp') return false
+      return displayRows.some(r => {
+        const v = r[col]
+        return v != null && v !== '' && !isNaN(Number(v))
       })
-      .map(col => {
-        const nums = displayRows
-          .map(r => r[col])
-          .filter(v => v != null && v !== '' && !isNaN(Number(v)))
-          .map(Number)
-        if (nums.length === 0) return null
-        const sum = nums.reduce((a, b) => a + b, 0)
-        const mean = sum / nums.length
-        const min = Math.min(...nums)
-        const max = Math.max(...nums)
-        return { col, sum, mean, min, max }
-      })
-      .filter(Boolean)
+    })
   }, [displayRows, visibleColumns, fieldMeta])
+
+  // C2) Divisor-aware stats for the selected column
+  const statsResult = useMemo(() => {
+    if (!statsCol || !statCandidateCols.includes(statsCol)) return null
+    const divisor = colDivisors[statsCol]
+    const nums = displayRows
+      .map(r => {
+        const v = r[statsCol]
+        if (v == null || v === '') return null
+        if (divisor && divisor !== 'raw') {
+          const str = applyDivisor(v, divisor)
+          const n = parseFloat(str)
+          return isNaN(n) ? null : n
+        }
+        const n = Number(v)
+        return isNaN(n) ? null : n
+      })
+      .filter(n => n !== null)
+    if (nums.length === 0) return null
+    const sum = nums.reduce((a, b) => a + b, 0)
+    const mean = sum / nums.length
+    const min = Math.min(...nums)
+    const max = Math.max(...nums)
+    return { sum, mean, min, max }
+  }, [displayRows, statsCol, statCandidateCols, colDivisors])
 
   const handleSort = (col) => {
     if (sortCol === col) {
@@ -470,15 +487,28 @@ export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id', co
         </table>
       </div>
 
-      {/* C) Stats bar */}
-      {statCols.length > 0 && displayRows.length > 0 && (
-        <div style={{ display: 'flex', gap: 8, overflowX: 'auto', padding: '6px 0', fontSize: 11 }}>
-          {statCols.map(({ col, sum, mean, min, max }) => (
-            <div key={col} style={{ flexShrink: 0, background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 4, padding: '4px 8px', fontFamily: 'var(--font-mono)' }}>
-              <div style={{ color: 'var(--color-text-muted)', marginBottom: 2 }}>{col}</div>
-              <div>Σ {fmtNum(sum)} · avg {fmtNum(mean)} · min {fmtNum(min)} · max {fmtNum(max)}</div>
+      {/* C) Stats bar — user picks a column */}
+      {statCandidateCols.length > 0 && displayRows.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', fontSize: 11 }}>
+          <span style={{ color: 'var(--color-text-muted)', flexShrink: 0 }}>Σ Stats:</span>
+          <select
+            value={statsCol || ''}
+            onChange={e => setStatsCol(e.target.value || null)}
+            style={{ fontSize: 11, padding: '2px 4px', background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)', borderRadius: 3 }}
+          >
+            <option value="">— pick column —</option>
+            {statCandidateCols.map(col => (
+              <option key={col} value={col}>{fieldMeta[col]?.label || col}</option>
+            ))}
+          </select>
+          {statsResult && statsCol && (
+            <div style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-text)' }}>
+              Σ {fmtNum(statsResult.sum)} · avg {fmtNum(statsResult.mean)} · min {fmtNum(statsResult.min)} · max {fmtNum(statsResult.max)}
+              {colDivisors[statsCol] && colDivisors[statsCol] !== 'raw' && (
+                <span style={{ color: 'var(--color-text-muted)', marginLeft: 4 }}>({colDivisors[statsCol]})</span>
+              )}
             </div>
-          ))}
+          )}
         </div>
       )}
 
