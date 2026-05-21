@@ -4,7 +4,6 @@ const express = require('express');
 const fetch = require('node-fetch');
 const { validateUrl } = require('../middleware/validateEndpoint');
 
-const router = express.Router();
 
 const ALLOWED_KEYS = new Set([
   'endpoint',
@@ -18,6 +17,7 @@ const ALLOWED_KEYS = new Set([
 ]);
 
 module.exports = function settingsRoutes(db) {
+  const router = express.Router();
   // GET /api/settings — return all settings as key-value object
   router.get('/', (req, res) => {
     try {

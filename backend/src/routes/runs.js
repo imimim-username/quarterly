@@ -4,8 +4,6 @@ const express = require('express');
 const { fetchAllPages } = require('../ponder');
 const { validateUrl } = require('../middleware/validateEndpoint');
 
-const router = express.Router();
-
 // Error type to HTTP status mapping
 const ERROR_STATUS = {
   invalid_endpoint: 400,
@@ -80,6 +78,9 @@ function resolveVariables(queryDef, startDate, endDate, overrides) {
 }
 
 module.exports = function runsRoutes(db) {
+  // Fresh router per invocation — avoids shared-handler pollution in tests
+  const router = express.Router();
+
   // POST /api/runs
   router.post('/', async (req, res) => {
     const { query_id, endpoint: reqEndpoint, start_date, end_date, variable_overrides } = req.body || {};

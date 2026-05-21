@@ -4,9 +4,9 @@ const express = require('express');
 const fetch = require('node-fetch');
 const { validateUrl } = require('../middleware/validateEndpoint');
 
-const router = express.Router();
 
 module.exports = function proxyRoutes(db) {
+  const router = express.Router();
   // POST /api/proxy
   // Proxies a GraphQL request to the configured endpoint through the
   // backend's SSRF protection layer. Used by the frontend SchemaExplorer

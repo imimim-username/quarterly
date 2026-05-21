@@ -4,7 +4,6 @@ const express = require('express');
 const fetch = require('node-fetch');
 const { validateUrl } = require('../middleware/validateEndpoint');
 
-const router = express.Router();
 
 const INTROSPECTION_QUERY = `
   query IntrospectionQuery {
@@ -21,6 +20,7 @@ const INTROSPECTION_QUERY = `
 `;
 
 module.exports = function introspectRoutes(db) {
+  const router = express.Router();
   // POST /api/introspect
   router.post('/', async (req, res) => {
     let endpoint = (req.body && req.body.endpoint) || null;

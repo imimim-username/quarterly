@@ -1,7 +1,6 @@
 'use strict';
 
 const express = require('express');
-const router = express.Router();
 
 const SCHEMA_VERSION = 1;
 const ALLOWED_SETTINGS = ['endpoint', 'warn_bytes', 'max_bytes', 'page_size', 'max_page_count', 'max_row_count', 'timeout_per_page_ms'];
@@ -34,6 +33,7 @@ function rowToExportQuery(row) {
 }
 
 module.exports = function transferRoutes(db) {
+  const router = express.Router();
   // ─── EXPORT ────────────────────────────────────────────────────────────────
 
   // POST /api/transfer/export

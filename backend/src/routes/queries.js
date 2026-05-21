@@ -1,7 +1,6 @@
 'use strict';
 
 const express = require('express');
-const router = express.Router();
 
 const REQUIRED_FIELDS = ['name', 'gql', 'result_path'];
 const VALID_PAGINATION = ['offset', 'cursor', 'none'];
@@ -82,6 +81,7 @@ function rowToQuery(row) {
 }
 
 module.exports = function queriesRoutes(db) {
+  const router = express.Router();
   // GET /api/queries
   router.get('/', (req, res) => {
     try {

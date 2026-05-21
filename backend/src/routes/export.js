@@ -4,7 +4,6 @@ const express = require('express');
 const archiver = require('archiver');
 const { toJson, toCsv } = require('../export');
 
-const router = express.Router();
 
 function parseRunRows(row) {
   let rows = null;
@@ -22,6 +21,7 @@ function parseRunRows(row) {
 }
 
 module.exports = function exportRoutes(db) {
+  const router = express.Router();
   // GET /api/export/run/:id/json
   router.get('/run/:id/json', (req, res) => {
     try {

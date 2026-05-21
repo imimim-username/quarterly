@@ -4,7 +4,6 @@ const express = require('express');
 const { fetchAllPages } = require('../ponder');
 const { validateUrl } = require('../middleware/validateEndpoint');
 
-const router = express.Router();
 
 function parseQueryRow(row) {
   let variable_defs, field_meta, chart_views;
@@ -47,6 +46,7 @@ function resolveVariables(queryDef, startDate, endDate) {
 }
 
 module.exports = function reportsRoutes(db) {
+  const router = express.Router();
   // GET /api/reports
   router.get('/', (req, res) => {
     try {

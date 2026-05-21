@@ -40,7 +40,8 @@ if (nativeAvailable) {
         chain_mode TEXT NOT NULL DEFAULT 'filter', chain_var_name TEXT NOT NULL DEFAULT 'chain',
         chain_field TEXT NOT NULL DEFAULT 'chain', field_meta TEXT NOT NULL DEFAULT '{}',
         key_field TEXT NOT NULL DEFAULT 'id', is_builtin INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        chart_views TEXT NOT NULL DEFAULT '[]'
       );
       INSERT OR IGNORE INTO settings (key, value) VALUES ('builtin_imported', '0');
     `);
