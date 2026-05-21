@@ -12,6 +12,7 @@ import ResultFilters from './components/ResultFilters.jsx'
 import SchemaExplorer from './components/SchemaExplorer.jsx'
 import AddressBook from './components/AddressBook.jsx'
 import ImportExportModal from './components/ImportExportModal.jsx'
+import QueryPreviewModal from './components/QueryPreviewModal.jsx'
 import { createRun, listAddressLabels, updateQuery } from './api/client.js'
 
 export default function App() {
@@ -29,6 +30,7 @@ export default function App() {
   const [schemaExplorerOpen, setSchemaExplorerOpen] = useState(false)
   const [addressBookOpen, setAddressBookOpen] = useState(false)
   const [importExportOpen, setImportExportOpen] = useState(false)
+  const [queryPreviewOpen, setQueryPreviewOpen] = useState(false)
   const [addressLabels, setAddressLabels] = useState([])
   const [prefillGql, setPrefillGql] = useState(null)
 
@@ -94,6 +96,7 @@ export default function App() {
     setRunError(null)
     setCurrentRun(null)
     setActiveFilters({})
+    setQueryPreviewOpen(false)
     setTab('results')
 
     // Create AbortController for this run
@@ -315,6 +318,13 @@ export default function App() {
                   <span>{currentRun.row_count} rows</span>
                   <span>{currentRun.page_count} pages</span>
                   <span>{currentRun.duration_ms}ms</span>
+                  <button
+                    onClick={() => setQueryPreviewOpen(true)}
+                    title="View the query and variables sent to the endpoint"
+                    style={{ fontSize: 11, padding: '1px 7px', color: 'var(--color-text-muted)', background: 'transparent', border: '1px solid var(--color-border)' }}
+                  >
+                    View query
+                  </button>
                   {currentRun.id && <ExportButtons runId={currentRun.id} />}
                 </div>
               )}
@@ -388,6 +398,14 @@ export default function App() {
         <SchemaExplorer
           onClose={() => setSchemaExplorerOpen(false)}
           onUseQuery={handleUseQuery}
+        />
+      )}
+
+      {/* Query preview modal */}
+      {queryPreviewOpen && currentRun && (
+        <QueryPreviewModal
+          run={currentRun}
+          onClose={() => setQueryPreviewOpen(false)}
         />
       )}
 
