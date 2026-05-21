@@ -3,6 +3,7 @@
 const express = require('express');
 const { fetchAllPages } = require('../ponder');
 const { validateUrl } = require('../middleware/validateEndpoint');
+const { autoInjectDateFilter } = require('../utils/autoInjectDateFilter');
 
 // Error type to HTTP status mapping
 const ERROR_STATUS = {
@@ -140,6 +141,30 @@ module.exports = function runsRoutes(db) {
       });
     }
 
+    // Auto-inject timestamp where-clause when no date variable_defs are configured.
+    // If the injected query returns a GraphQL error we retry with the original GQL.
+    let gqlToRun = queryDef.gql;
+    let varsToRun = variables_base;
+    let autoInjected = false;
+
+    if (start_date || end_date) {
+      let parsedVarDefs = [];
+      try { parsedVarDefs = JSON.parse(queryDef.variable_defs || '[]'); } catch {}
+      const hasDateSources = parsedVarDefs.some(
+        d => d.source === 'global_start' || d.source === 'global_end'
+      );
+      if (!hasDateSources) {
+        const inj = autoInjectDateFilter(
+          queryDef.gql, start_date, end_date, queryDef.date_format
+        );
+        if (inj.injected) {
+          gqlToRun    = inj.gql;
+          varsToRun   = { ...variables_base, ...inj.extraVars };
+          autoInjected = true;
+        }
+      }
+    }
+
     // Fetch settings
     const settingsRows = db.prepare('SELECT key, value FROM settings').all();
     const settings = {};
@@ -156,14 +181,32 @@ module.exports = function runsRoutes(db) {
     const ranAt = new Date().toISOString();
 
     // Execute pagination
-    const result = await fetchAllPages(
+    let result = await fetchAllPages(
       endpoint,
-      queryDef.gql,
-      variables_base,
+      gqlToRun,
+      varsToRun,
       queryDef,
       settings,
       abortController.signal
     );
+
+    // If auto-injection caused a GraphQL error, retry with the original query.
+    // This handles endpoints that don't support timestamp_gte / timestamp_lte filters.
+    if (autoInjected && result.error_type === 'graphql' && !abortController.signal.aborted) {
+      const fallback = await fetchAllPages(
+        endpoint, queryDef.gql, variables_base, queryDef, settings, abortController.signal
+      );
+      result = {
+        ...fallback,
+        warnings: [
+          'Auto date filter injection failed — your endpoint may not support ' +
+          'timestamp_gte / timestamp_lte filters. Returning unfiltered results. ' +
+          'To apply server-side date filtering, configure variable_defs with ' +
+          'source: "global_start" / "global_end".',
+          ...(fallback.warnings || []),
+        ],
+      };
+    }
 
     const {
       rows, page_count, duration_ms, warnings,

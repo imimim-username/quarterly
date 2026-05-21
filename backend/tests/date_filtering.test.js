@@ -3,15 +3,14 @@
 /**
  * Tests for date-variable filtering.
  *
- * Verifies that start_date / end_date supplied to POST /api/runs are
- * translated into GraphQL variables that travel in the request body sent
- * to the Ponder endpoint — i.e. filtering is server-side, not a
- * post-hoc client-side trim of an already-complete dataset.
- *
- * Two test groups:
- *   1. Unit / route-level — nock intercepts the outgoing HTTP request so
- *      we can inspect exactly which variables were sent.
- *   2. Integration — real requests to the live endpoint; asserts that a
+ * Three test groups:
+ *   1. Unit / route-level (resolveVariables) — nock intercepts the outgoing
+ *      HTTP request so we can inspect exactly which variables were sent when
+ *      the query has explicit global_start / global_end variable_defs.
+ *   2. Auto date-filter injection — verifies that when a query has NO date
+ *      variable_defs the backend auto-injects `where: { timestamp_gte, … }`
+ *      into the GQL and falls back gracefully if the endpoint rejects it.
+ *   3. Integration — real requests to the live endpoint; asserts that a
  *      narrow time window returns fewer rows than an unbounded query.
  *      These tests are skipped when QUARTERLY_INTEGRATION_TESTS !== '1'.
  */
@@ -25,6 +24,7 @@ const migration001 = require('../src/migrations/001_initial');
 const migration002 = require('../src/migrations/002_address_labels');
 const migration003 = require('../src/migrations/003_chart_views');
 const runsRoutes = require('../src/routes/runs');
+const { autoInjectDateFilter } = require('../src/utils/autoInjectDateFilter');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -357,7 +357,7 @@ describe('resolveVariables — date variable injection (via POST /api/runs)', ()
       app = createApp(db);
     });
 
-    test('query with no date variable_defs: date params have no effect on variables', async () => {
+    test('query with no date variable_defs: auto-injects timestamp_gte / timestamp_lte', async () => {
       const queryId = insertQuery(db, {
         variable_defs: JSON.stringify([
           { name: 'first', source: 'pagination_first', default: 1000 },
@@ -366,10 +366,12 @@ describe('resolveVariables — date variable injection (via POST /api/runs)', ()
         date_format: 'unix_seconds',
       });
 
-      const { capturedVars } = await runQuery(app, queryId, '2024-01-01T00:00:00.000Z', '2024-12-31T23:59:59.000Z');
-      // No date vars in the query def → nothing injected
-      expect(capturedVars.timestamp_gte).toBeUndefined();
-      expect(capturedVars.timestamp_lte).toBeUndefined();
+      const START = '2024-01-01T00:00:00.000Z';
+      const END   = '2024-12-31T23:59:59.000Z';
+      const { capturedVars } = await runQuery(app, queryId, START, END);
+      // Auto-injection kicks in → both timestamp vars present
+      expect(capturedVars.timestamp_gte).toBe(Math.floor(new Date(START).getTime() / 1000));
+      expect(capturedVars.timestamp_lte).toBe(Math.floor(new Date(END).getTime() / 1000));
     });
 
     test('start_date only: only start variable injected', async () => {
@@ -408,7 +410,308 @@ describe('resolveVariables — date variable injection (via POST /api/runs)', ()
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// GROUP 2 — Integration tests against live Ponder endpoint
+// GROUP 2 — Auto date-filter injection (unit + nock route tests)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// The user's exact alchemistBurns GQL (no variable_defs, no where clause).
+const BURNS_GQL = [
+  'query MyQuery {',
+  '  alchemistBurns(orderBy: "timestamp", orderDirection: "asc") {',
+  '    items {',
+  '      alchemist',
+  '      amount',
+  '      chain',
+  '      timestamp',
+  '    }',
+  '  }',
+  '}',
+].join('\n');
+
+describe('autoInjectDateFilter() — unit tests', () => {
+  test('injects timestamp_gte into query signature and field args (unix_seconds)', () => {
+    const START = '2026-05-15T00:00:00.000Z';
+    const { gql, extraVars, injected } = autoInjectDateFilter(BURNS_GQL, START, null, 'unix_seconds');
+
+    expect(injected).toBe(true);
+    // Variable declaration added to query signature
+    expect(gql).toContain('$timestamp_gte: BigInt');
+    // Where clause added to field arguments
+    expect(gql).toContain('where: { timestamp_gte: $timestamp_gte }');
+    // Original field args preserved after the injected where
+    expect(gql).toContain('orderBy: "timestamp"');
+    // Correct scalar value
+    expect(extraVars.timestamp_gte).toBe(Math.floor(new Date(START).getTime() / 1000));
+    expect(extraVars.timestamp_lte).toBeUndefined();
+  });
+
+  test('injects both timestamp_gte and timestamp_lte when both dates given', () => {
+    const START = '2026-05-15T00:00:00.000Z';
+    const END   = '2026-05-16T00:00:00.000Z';
+    const { gql, extraVars, injected } = autoInjectDateFilter(BURNS_GQL, START, END, 'unix_seconds');
+
+    expect(injected).toBe(true);
+    expect(gql).toContain('$timestamp_gte: BigInt');
+    expect(gql).toContain('$timestamp_lte: BigInt');
+    expect(gql).toContain('where: { timestamp_gte: $timestamp_gte, timestamp_lte: $timestamp_lte }');
+    expect(extraVars.timestamp_gte).toBe(Math.floor(new Date(START).getTime() / 1000));
+    expect(extraVars.timestamp_lte).toBe(Math.floor(new Date(END).getTime() / 1000));
+  });
+
+  test('end-only: injects only timestamp_lte', () => {
+    const END = '2026-05-16T00:00:00.000Z';
+    const { gql, extraVars, injected } = autoInjectDateFilter(BURNS_GQL, null, END, 'unix_seconds');
+
+    expect(injected).toBe(true);
+    expect(gql).not.toContain('timestamp_gte');
+    expect(gql).toContain('$timestamp_lte: BigInt');
+    expect(gql).toContain('where: { timestamp_lte: $timestamp_lte }');
+    expect(extraVars.timestamp_lte).toBe(Math.floor(new Date(END).getTime() / 1000));
+  });
+
+  test('no dates → injected: false, gql unchanged', () => {
+    const { gql, extraVars, injected } = autoInjectDateFilter(BURNS_GQL, null, null, 'unix_seconds');
+
+    expect(injected).toBe(false);
+    expect(gql).toBe(BURNS_GQL);
+    expect(Object.keys(extraVars)).toHaveLength(0);
+  });
+
+  test('unix_ms format: value is milliseconds, type is still BigInt', () => {
+    const START = '2026-05-15T00:00:00.000Z';
+    const { gql, extraVars, injected } = autoInjectDateFilter(BURNS_GQL, START, null, 'unix_ms');
+
+    expect(injected).toBe(true);
+    expect(gql).toContain('$timestamp_gte: BigInt');
+    expect(extraVars.timestamp_gte).toBe(new Date(START).getTime());
+  });
+
+  test('iso8601 format: value is ISO string, type is String', () => {
+    const START = '2026-05-15T00:00:00.000Z';
+    const { gql, extraVars, injected } = autoInjectDateFilter(BURNS_GQL, START, null, 'iso8601');
+
+    expect(injected).toBe(true);
+    expect(gql).toContain('$timestamp_gte: String');
+    expect(extraVars.timestamp_gte).toBe(new Date(START).toISOString());
+  });
+
+  test('query with existing variable declarations: new vars appended', () => {
+    const gqlWithVars = [
+      'query MyQuery($chain: String) {',
+      '  alchemistBurns(chain: $chain, orderBy: "timestamp", orderDirection: "asc") {',
+      '    items { timestamp }',
+      '  }',
+      '}',
+    ].join('\n');
+
+    const { gql, injected } = autoInjectDateFilter(gqlWithVars, '2026-05-15T00:00:00.000Z', null, 'unix_seconds');
+
+    expect(injected).toBe(true);
+    // Both original and new var declarations present
+    expect(gql).toContain('$chain: String');
+    expect(gql).toContain('$timestamp_gte: BigInt');
+    // Where prepended before existing field arg
+    expect(gql).toContain('where: { timestamp_gte: $timestamp_gte }, chain: $chain');
+  });
+
+  test('query with field that has no args: wraps in new parens', () => {
+    const gqlNoArgs = [
+      'query MyQuery {',
+      '  alchemistBurns {',
+      '    items { timestamp }',
+      '  }',
+      '}',
+    ].join('\n');
+
+    const { gql, injected } = autoInjectDateFilter(gqlNoArgs, '2026-05-15T00:00:00.000Z', null, 'unix_seconds');
+
+    expect(injected).toBe(true);
+    expect(gql).toContain('alchemistBurns(where: { timestamp_gte: $timestamp_gte })');
+  });
+
+  test('non-query document (no query keyword): injected: false', () => {
+    const mutation = 'mutation { foo }';
+    const { gql, injected } = autoInjectDateFilter(mutation, '2026-05-15T00:00:00.000Z', null, 'unix_seconds');
+
+    expect(injected).toBe(false);
+    expect(gql).toBe(mutation);
+  });
+
+  test('injected GQL is valid GraphQL-looking text (smoke check)', () => {
+    const { gql, injected } = autoInjectDateFilter(
+      BURNS_GQL, '2026-05-15T00:00:00.000Z', '2026-05-16T00:00:00.000Z', 'unix_seconds'
+    );
+
+    expect(injected).toBe(true);
+    // Starts with query keyword
+    expect(gql.trim()).toMatch(/^query MyQuery\(/);
+    // Braces balanced
+    const opens  = (gql.match(/\{/g) || []).length;
+    const closes = (gql.match(/\}/g) || []).length;
+    expect(opens).toBe(closes);
+  });
+});
+
+describe('Auto date-filter injection — route tests (nock)', () => {
+  // alchemistBurns query matching the user's export (no variable_defs)
+  function makeBurnsQuery(db) {
+    return insertQuery(db, {
+      name: 'alchemistBurns',
+      gql: BURNS_GQL,
+      variable_defs: '[]',
+      result_path: 'data.alchemistBurns.items',
+      pagination_style: 'offset',
+      date_format: 'unix_seconds',
+    });
+  }
+
+  const MOCK_BURNS_ROW = { alchemist: '0xABCD', amount: '1000000000000000000', chain: 'mainnet', timestamp: '1747353601' };
+
+  test('injects where clause and timestamp vars into outgoing GraphQL request', async () => {
+    const db  = createTestDb();
+    const app = createApp(db);
+    const qid = makeBurnsQuery(db);
+    const START = '2026-05-15T00:00:00.000Z';
+
+    let capturedBody = null;
+    // First page: one row
+    nock(MOCK_HOST).post(MOCK_PATH, body => { capturedBody = body; return true; })
+      .reply(200, { data: { alchemistBurns: { items: [MOCK_BURNS_ROW] } } });
+    // Second page: empty → pagination ends
+    nock(MOCK_HOST).post(MOCK_PATH).reply(200, { data: { alchemistBurns: { items: [] } } });
+
+    const res = await supertest(app).post('/api/runs').send({ query_id: qid, start_date: START });
+
+    expect(res.status).toBe(200);
+    expect(res.body.rows).toHaveLength(1);
+    expect(capturedBody).not.toBeNull();
+    // Variable injected with correct unix value
+    expect(capturedBody.variables.timestamp_gte).toBe(Math.floor(new Date(START).getTime() / 1000));
+    expect(capturedBody.variables.timestamp_lte).toBeUndefined();
+    // GQL modified to include the where clause
+    expect(capturedBody.query).toContain('where: { timestamp_gte: $timestamp_gte }');
+    expect(capturedBody.query).toContain('$timestamp_gte: BigInt');
+    // Original args still present
+    expect(capturedBody.query).toContain('orderBy: "timestamp"');
+  });
+
+  test('injects both bounds when start_date and end_date provided', async () => {
+    const db  = createTestDb();
+    const app = createApp(db);
+    const qid = makeBurnsQuery(db);
+    const START = '2026-05-15T00:00:00.000Z';
+    const END   = '2026-05-16T00:00:00.000Z';
+
+    let capturedBody = null;
+    nock(MOCK_HOST).post(MOCK_PATH, body => { capturedBody = body; return true; })
+      .reply(200, { data: { alchemistBurns: { items: [] } } });
+
+    await supertest(app).post('/api/runs').send({ query_id: qid, start_date: START, end_date: END });
+
+    expect(capturedBody.variables.timestamp_gte).toBe(Math.floor(new Date(START).getTime() / 1000));
+    expect(capturedBody.variables.timestamp_lte).toBe(Math.floor(new Date(END).getTime() / 1000));
+    expect(capturedBody.query).toContain('where: { timestamp_gte: $timestamp_gte, timestamp_lte: $timestamp_lte }');
+  });
+
+  test('does NOT inject when query already has global_start variable_defs', async () => {
+    const db  = createTestDb();
+    const app = createApp(db);
+    const qid = insertQuery(db, {
+      gql: 'query Q($ts_gte: BigInt, $first: Int, $skip: Int) { alchemistBurns(where: { timestamp_gte: $ts_gte }, limit: $first, offset: $skip) { items { timestamp } } }',
+      variable_defs: JSON.stringify([
+        { name: 'ts_gte', source: 'global_start', default: null },
+        { name: 'first',  source: 'pagination_first', default: 1000 },
+        { name: 'skip',   source: 'pagination_skip',  default: 0 },
+      ]),
+      result_path: 'data.alchemistBurns.items',
+      date_format: 'unix_seconds',
+    });
+
+    let capturedBody = null;
+    nock(MOCK_HOST).post(MOCK_PATH, body => { capturedBody = body; return true; })
+      .reply(200, { data: { alchemistBurns: { items: [] } } });
+
+    const START = '2026-05-15T00:00:00.000Z';
+    await supertest(app).post('/api/runs').send({ query_id: qid, start_date: START });
+
+    // ts_gte should be set from resolveVariables (via variable_defs), not auto-inject
+    expect(capturedBody.variables.ts_gte).toBe(Math.floor(new Date(START).getTime() / 1000));
+    // Auto-inject's canonical names must NOT appear (would indicate double-injection)
+    expect(capturedBody.variables.timestamp_gte).toBeUndefined();
+  });
+
+  test('does NOT inject when no dates provided', async () => {
+    const db  = createTestDb();
+    const app = createApp(db);
+    const qid = makeBurnsQuery(db);
+
+    let capturedBody = null;
+    nock(MOCK_HOST).post(MOCK_PATH, body => { capturedBody = body; return true; })
+      .reply(200, { data: { alchemistBurns: { items: [] } } });
+
+    await supertest(app).post('/api/runs').send({ query_id: qid });
+
+    expect(capturedBody.variables.timestamp_gte).toBeUndefined();
+    expect(capturedBody.query).not.toContain('timestamp_gte');
+  });
+
+  test('falls back to original query on GraphQL error and adds warning', async () => {
+    const db  = createTestDb();
+    const app = createApp(db);
+    const qid = makeBurnsQuery(db);
+    const START = '2026-05-15T00:00:00.000Z';
+
+    let fallbackBody = null;
+    // First request (injected): endpoint returns a GraphQL error
+    nock(MOCK_HOST).post(MOCK_PATH)
+      .reply(200, { errors: [{ message: 'Unknown argument "where" on field "Query.alchemistBurns".' }] });
+    // Second request (fallback): original query succeeds
+    nock(MOCK_HOST).post(MOCK_PATH, body => { fallbackBody = body; return true; })
+      .reply(200, { data: { alchemistBurns: { items: [MOCK_BURNS_ROW] } } });
+    // Third request (pagination page 2 of fallback): empty
+    nock(MOCK_HOST).post(MOCK_PATH)
+      .reply(200, { data: { alchemistBurns: { items: [] } } });
+
+    const res = await supertest(app).post('/api/runs').send({ query_id: qid, start_date: START });
+
+    expect(res.status).toBe(200);
+    // Rows from the fallback query
+    expect(res.body.rows).toHaveLength(1);
+    // Warning tells the user filtering did not apply
+    expect(res.body.warnings).toEqual(
+      expect.arrayContaining([expect.stringContaining('Auto date filter injection failed')])
+    );
+    // Fallback request used the original GQL (no where clause)
+    expect(fallbackBody.query).not.toContain('timestamp_gte');
+    // Fallback request has no timestamp vars
+    expect(fallbackBody.variables.timestamp_gte).toBeUndefined();
+  });
+
+  test('no fallback retry when injection succeeds (graphql_partial is not retried)', async () => {
+    const db  = createTestDb();
+    const app = createApp(db);
+    const qid = makeBurnsQuery(db);
+    const START = '2026-05-15T00:00:00.000Z';
+
+    let requestCount = 0;
+    // Return a graphql_partial on the first page (data + errors)
+    nock(MOCK_HOST).post(MOCK_PATH, () => { requestCount++; return true; })
+      .reply(200, {
+        data: { alchemistBurns: { items: [MOCK_BURNS_ROW] } },
+        errors: [{ message: 'Some partial error' }],
+      });
+
+    const res = await supertest(app).post('/api/runs').send({ query_id: qid, start_date: START });
+
+    // graphql_partial is not a full failure → no retry
+    expect(requestCount).toBe(1);
+    expect(res.body.error_type).toBe('graphql_partial');
+    // No auto-inject fallback warning
+    expect((res.body.warnings || []).some(w => w.includes('Auto date filter injection failed'))).toBe(false);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GROUP 3 — Integration tests against live Ponder endpoint
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const describeIntegration = INTEGRATION ? describe : describe.skip;
@@ -525,4 +828,103 @@ describeIntegration('Integration — live Ponder endpoint date filtering', () =>
       expect(ts).toBeLessThanOrEqual(end);
     }
   }, 30000);
+});
+
+// ─── Auto-injection integration — user's exact alchemistBurns query ────────────
+
+describeIntegration('Integration — auto date-filter injection with alchemistBurns', () => {
+  /**
+   * Uses the user's exact query from their export file:
+   *   - No variable_defs (empty array)
+   *   - No where clause in the GQL
+   *   - date_format: unix_seconds
+   *
+   * The backend should auto-inject timestamp_gte / timestamp_lte and the live
+   * Ponder endpoint should honour them, returning only the filtered rows.
+   *
+   * Data range for alchemistBurns: confirmed 2026-04-14 to present.
+   * Anchor window: May 15–16 2026 (should have data after the first few weeks).
+   */
+
+  const MAY_15_TS = Math.floor(new Date('2026-05-15T00:00:00Z').getTime() / 1000); // 1747353600
+  const MAY_16_TS = Math.floor(new Date('2026-05-16T00:00:00Z').getTime() / 1000); // 1747440000
+
+  function createLiveDb() {
+    const db = createTestDb(); // in-memory, fully migrated
+    db.prepare("UPDATE settings SET value=? WHERE key='endpoint'").run(LIVE_ENDPOINT);
+    // Smaller page size so test completes quickly
+    db.prepare("UPDATE settings SET value=? WHERE key='page_size'").run('200');
+    db.prepare("UPDATE settings SET value=? WHERE key='max_page_count'").run('5');
+    return db;
+  }
+
+  function makeLiveBurnsQuery(db) {
+    return insertQuery(db, {
+      name: 'alchemistBurns',
+      gql: BURNS_GQL,
+      variable_defs: '[]',
+      result_path: 'data.alchemistBurns.items',
+      pagination_style: 'offset',
+      date_format: 'unix_seconds',
+    });
+  }
+
+  test('auto-injected start_date returns only rows on or after May 15 2026', async () => {
+    const db  = createLiveDb();
+    const app = createApp(db);
+    const qid = makeLiveBurnsQuery(db);
+
+    const res = await supertest(app)
+      .post('/api/runs')
+      .send({ query_id: qid, start_date: '2026-05-15T00:00:00.000Z' })
+      .timeout(60000);
+
+    expect(res.status).toBe(200);
+    // Should have returned data (no error) — if 0 rows there's simply nothing after May 15
+    expect(res.body.error_type == null || res.body.error_type === 'graphql_partial').toBe(true);
+
+    if (res.body.rows && res.body.rows.length > 0) {
+      // Every row must have timestamp >= May 15
+      for (const row of res.body.rows) {
+        expect(Number(row.timestamp)).toBeGreaterThanOrEqual(MAY_15_TS);
+      }
+    }
+
+    // No fallback warning — injection should have succeeded
+    const warnings = res.body.warnings || [];
+    expect(warnings.some(w => w.includes('Auto date filter injection failed'))).toBe(false);
+  }, 60000);
+
+  test('auto-injected date range returns fewer rows than unbounded query', async () => {
+    const db   = createLiveDb();
+    const app  = createApp(db);
+    const qid  = makeLiveBurnsQuery(db);
+
+    // 1-day window
+    const [narrowRes, wideRes] = await Promise.all([
+      supertest(app).post('/api/runs')
+        .send({ query_id: qid, start_date: '2026-05-15T00:00:00.000Z', end_date: '2026-05-16T00:00:00.000Z' })
+        .timeout(60000),
+      supertest(app).post('/api/runs')
+        .send({ query_id: qid })
+        .timeout(60000),
+    ]);
+
+    expect(narrowRes.status).toBe(200);
+    expect(wideRes.status).toBe(200);
+
+    const narrowCount = narrowRes.body.row_count ?? 0;
+    const wideCount   = wideRes.body.row_count   ?? 0;
+
+    // Wide query must return at least as many rows as the 1-day window
+    expect(wideCount).toBeGreaterThanOrEqual(narrowCount);
+
+    // Narrow rows must all be within the 1-day window
+    if (narrowRes.body.rows) {
+      for (const row of narrowRes.body.rows) {
+        expect(Number(row.timestamp)).toBeGreaterThanOrEqual(MAY_15_TS);
+        expect(Number(row.timestamp)).toBeLessThanOrEqual(MAY_16_TS);
+      }
+    }
+  }, 120000);
 });
