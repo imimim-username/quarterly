@@ -67,3 +67,12 @@ export const commitImport  = (body)   => request('POST', '/transfer/import', bod
 export const exportRunJson = (id) => `${BASE}/export/run/${id}/json`;
 export const exportRunCsv = (id) => `${BASE}/export/run/${id}/csv`;
 export const exportReportRunZip = (id) => `${BASE}/export/report-run/${id}/zip`;
+
+// Endpoint profiles
+export const listEndpoints   = ()         => request('GET',    '/endpoints');
+export const createEndpoint  = (body)     => request('POST',   '/endpoints', body);
+export const updateEndpoint  = (id, body) => request('PUT',    `/endpoints/${id}`, body);
+export const deleteEndpoint  = (id)       => request('DELETE', `/endpoints/${id}`);
+
+// Report runs list
+export const listReportRuns  = (reportId) => request('GET',    `/reports/${reportId}/runs`);
