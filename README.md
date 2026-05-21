@@ -135,7 +135,17 @@ After saving, open the **Field Meta** tab to configure per-column display:
 - **Decimals** — number of decimal places to scale by (e.g. `18` for ETH, `6` for USDC)
 - **Type** — set to `unix_seconds` or `unix_ms` to have a column formatted as a date
 
-### 4. Run a query
+### 4. Set the date range
+
+The **Start** and **End** date pickers in the top bar control the time window passed to your queries. They apply globally — whichever query you run will use them.
+
+- If a query has variables with source `global_start` or `global_end`, those variables are filled in automatically from the pickers when you click Run. The values are formatted according to the query's **Date format** setting (`unix_seconds`, `unix_ms`, or `iso8601`) before being sent to the GraphQL endpoint.
+- If a query has no date variables, the pickers have no effect on what is fetched — but the **Results** tab will still use the date range to filter any `timestamp` column client-side, so you can narrow down a full dataset without re-running.
+- Leaving a picker blank omits that bound: no start date means "from the beginning of the data"; no end date means "up to the latest".
+
+Set your date range before clicking Run so the correct window is sent to the endpoint.
+
+### 6. Run a query
 
 The left sidebar lists all saved queries grouped by category. Click any query to select it — its definition loads into the editor on the right. Set a date range at the top if the query uses date variables, then click **Run**. The results appear in the **Results** tab as a table.
 
@@ -143,7 +153,7 @@ The left sidebar lists all saved queries grouped by category. Click any query to
 
 The left sidebar lists all saved queries grouped by category. Click any query to select it — its definition loads into the editor on the right. Set a date range at the top if the query uses date variables, then click **Run**. The results appear in the **Results** tab as a table.
 
-### 6. Filter the data
+### 7. Filter the data
 
 Above the table you'll see **filter chips** for each column that has repeated values. Click a chip value to activate it — results narrow to only rows matching that value. Common starting point: click a **chain** chip to focus on one chain.
 
@@ -151,13 +161,13 @@ When you filter by a single chain, address columns in the remaining filter chips
 
 Click additional chip values to add more filters. Click an active value again to remove it.
 
-### 7. Read the table
+### 8. Read the table
 
 - **Timestamp fields** are displayed as formatted local dates.
 - **Decimal fields** (assets, shares, balances) are scaled by the field's configured divisor — so an 18-decimal token value like `1000000000000000000` displays as `1.0`.
 - **Address fields** that have a matching Address Book entry show the label instead of the raw address. Hover to see the raw address; click to copy it to the clipboard.
 
-### 8. Cycle number formats
+### 9. Cycle number formats
 
 For numeric columns you can click the small divisor label on a column chip (or in a chart Y-axis selector) to cycle through display formats:
 
@@ -165,7 +175,7 @@ For numeric columns you can click the small divisor label on a column chip (or i
 - **÷1e6** — divide by 1,000,000 (useful for USDC and other 6-decimal tokens)
 - **÷1e18** — divide by 10^18 (useful for ETH, DAI, and most ERC-20 tokens)
 
-### 9. View a chart
+### 10. View a chart
 
 Click the **Chart** tab. If the query has a saved chart view, open the **Load view** dropdown and select it — the chart will configure itself automatically with the right X field, Y fields, chart type, and divisors.
 
@@ -180,7 +190,7 @@ To build a chart from scratch:
 
 Use the ECharts toolbar (top-right of the chart) to zoom, reset, or download the chart as a PNG.
 
-### 10. Compare two runs
+### 11. Compare two runs
 
 Run the same query for a different date range (or after new data has been indexed). Open the **History** drawer, pin two runs, then click **Compare**. The Compare view matches rows by the query's key field and shows a delta column with absolute and percentage change for every numeric field.
 
