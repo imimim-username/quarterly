@@ -338,6 +338,22 @@ module.exports = function runsRoutes(db) {
     }
   });
 
+  // PATCH /api/runs/:id — update notes
+  router.patch('/:id', (req, res) => {
+    const { notes } = req.body || {};
+    if (notes !== undefined && typeof notes !== 'string' && notes !== null) {
+      return res.status(400).json({ error: 'validation_error', message: 'notes must be a string or null.' });
+    }
+    try {
+      const existing = db.prepare('SELECT id FROM runs WHERE id = ?').get(req.params.id);
+      if (!existing) return res.status(404).json({ error: 'not_found', message: 'Run not found.' });
+      db.prepare('UPDATE runs SET notes = ? WHERE id = ?').run(notes ?? null, req.params.id);
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ error: 'db_error', message: e.message });
+    }
+  });
+
   // DELETE /api/runs/:id
   router.delete('/:id', (req, res) => {
     try {
