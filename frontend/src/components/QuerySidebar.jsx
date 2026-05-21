@@ -125,29 +125,31 @@ export default function QuerySidebar({
                 onClick={() => onSelectQuery(q)}
                 onMouseEnter={() => setHoveredId(q.id)}
                 onMouseLeave={() => setHoveredId(null)}
-                style={{ display: 'flex', alignItems: 'center' }}
               >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="sidebar-item-name">
+                {/* Name row: text + clone button side-by-side */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span className="sidebar-item-name" style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {q.is_builtin ? '🔒 ' : ''}{q.name}
-                  </div>
-                  <div className="sidebar-item-meta">
-                    {q.last_run_at
-                      ? `Last run: ${new Date(q.last_run_at).toLocaleDateString()}`
-                      : 'Never run'}
-                    {q.last_row_count != null ? ` · ${q.last_row_count} rows` : ''}
-                  </div>
-                </div>
-                {/* B) Clone button on hover */}
-                {hoveredId === q.id && (
+                  </span>
+                  {/* B) Clone button — invisible when not hovered to preserve layout */}
                   <button
                     title="Duplicate query"
                     onClick={e => { e.stopPropagation(); onCloneQuery(q) }}
-                    style={{ fontSize: 11, padding: '1px 5px', marginLeft: 'auto', flexShrink: 0, opacity: 0.7 }}
+                    style={{
+                      fontSize: 11, padding: '1px 5px', flexShrink: 0,
+                      visibility: hoveredId === q.id ? 'visible' : 'hidden',
+                      opacity: 0.7,
+                    }}
                   >
                     ⧉
                   </button>
-                )}
+                </div>
+                <div className="sidebar-item-meta">
+                  {q.last_run_at
+                    ? `Last run: ${new Date(q.last_run_at).toLocaleDateString()}`
+                    : 'Never run'}
+                  {q.last_row_count != null ? ` · ${q.last_row_count} rows` : ''}
+                </div>
               </div>
             ))}
           </div>

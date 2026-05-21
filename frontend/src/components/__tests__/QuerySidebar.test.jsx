@@ -57,23 +57,25 @@ describe('QuerySidebar', () => {
     expect(onSelectQuery).toHaveBeenCalledWith(QUERIES[0])
   })
 
-  it('clone button appears on hover and calls onCloneQuery', async () => {
+  it('clone button is hidden by default and visible on hover; calls onCloneQuery', async () => {
     const onCloneQuery = vi.fn()
     render(<QuerySidebar onSelectQuery={() => {}} onNewQuery={() => {}} onCloneQuery={onCloneQuery} />)
 
     await waitFor(() => expect(screen.getByText('Alpha Query')).toBeInTheDocument())
 
-    // The clone button should not be visible yet
-    expect(screen.queryByTitle('Duplicate query')).not.toBeInTheDocument()
+    // All clone buttons are in the DOM but hidden (visibility:hidden) before hover
+    const allCloneBtns = screen.getAllByTitle('Duplicate query')
+    expect(allCloneBtns.length).toBe(QUERIES.length)
+    allCloneBtns.forEach(btn => expect(btn).toHaveStyle({ visibility: 'hidden' }))
 
-    // Hover over the sidebar item that contains Alpha Query
+    // Hover over the Alpha Query item — its button becomes visible
     const alphaItem = screen.getByText('Alpha Query').closest('.sidebar-item')
     fireEvent.mouseEnter(alphaItem)
 
-    const cloneBtn = screen.getByTitle('Duplicate query')
-    expect(cloneBtn).toBeInTheDocument()
+    const alphaCloneBtn = screen.getAllByTitle('Duplicate query')[0]
+    expect(alphaCloneBtn).toHaveStyle({ visibility: 'visible' })
 
-    fireEvent.click(cloneBtn)
+    fireEvent.click(alphaCloneBtn)
     expect(onCloneQuery).toHaveBeenCalledWith(QUERIES[0])
   })
 
