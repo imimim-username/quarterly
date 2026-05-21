@@ -51,6 +51,7 @@ if (nativeAvailable) {
         variables_base TEXT NOT NULL, rows TEXT, row_count INTEGER NOT NULL DEFAULT 0,
         page_count INTEGER NOT NULL DEFAULT 0, duration_ms INTEGER NOT NULL DEFAULT 0,
         error_type TEXT, error_message TEXT, graphql_errors TEXT, warnings TEXT,
+        notes TEXT,
         ran_at TEXT NOT NULL
       );
     `);
@@ -252,6 +253,73 @@ if (nativeAvailable) {
     });
   });
 
+  describe('PATCH /api/runs/:id — notes', () => {
+    test('PATCH with { notes: "test note" } → 200 { ok: true }, note persisted', async () => {
+      const db = makeDb();
+      const queryId = makeQuery(db);
+      const info = db.prepare(`
+        INSERT INTO runs (query_id, endpoint, variables_base, row_count, page_count, duration_ms, ran_at)
+        VALUES (?, ?, '{}', 0, 0, 100, datetime('now'))
+      `).run(queryId, 'http://127.0.0.1:9998/graphql');
+      const runId = info.lastInsertRowid;
+
+      const app = makeApp(db);
+      const patch = await request(app).patch(`/api/runs/${runId}`).send({ notes: 'test note' });
+      expect(patch.status).toBe(200);
+      expect(patch.body).toEqual({ ok: true });
+
+      const get = await request(app).get(`/api/runs/${runId}`);
+      expect(get.status).toBe(200);
+      expect(get.body.notes).toBe('test note');
+      db.close();
+    });
+
+    test('PATCH with { notes: null } → 200, clears note', async () => {
+      const db = makeDb();
+      const queryId = makeQuery(db);
+      const info = db.prepare(`
+        INSERT INTO runs (query_id, endpoint, variables_base, row_count, page_count, duration_ms, notes, ran_at)
+        VALUES (?, ?, '{}', 0, 0, 100, 'existing note', datetime('now'))
+      `).run(queryId, 'http://127.0.0.1:9998/graphql');
+      const runId = info.lastInsertRowid;
+
+      const app = makeApp(db);
+      const patch = await request(app).patch(`/api/runs/${runId}`).send({ notes: null });
+      expect(patch.status).toBe(200);
+      expect(patch.body).toEqual({ ok: true });
+
+      const get = await request(app).get(`/api/runs/${runId}`);
+      expect(get.status).toBe(200);
+      expect(get.body.notes).toBeNull();
+      db.close();
+    });
+
+    test('PATCH /api/runs/9999 → 404', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const res = await request(app).patch('/api/runs/9999').send({ notes: 'ghost' });
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe('not_found');
+      db.close();
+    });
+
+    test('PATCH with { notes: 123 } (non-string) → 400 validation error', async () => {
+      const db = makeDb();
+      const queryId = makeQuery(db);
+      const info = db.prepare(`
+        INSERT INTO runs (query_id, endpoint, variables_base, row_count, page_count, duration_ms, ran_at)
+        VALUES (?, ?, '{}', 0, 0, 100, datetime('now'))
+      `).run(queryId, 'http://127.0.0.1:9998/graphql');
+      const runId = info.lastInsertRowid;
+
+      const app = makeApp(db);
+      const res = await request(app).patch(`/api/runs/${runId}`).send({ notes: 123 });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('validation_error');
+      db.close();
+    });
+  });
+
 } else {
   describe('runs.test.js — DB integration', () => {
     test.skip('valid run saved, rows non-null (skipped: better-sqlite3 native unavailable)', () => {});
@@ -264,5 +332,9 @@ if (nativeAvailable) {
     test.skip('GET list newest-first (skipped)', () => {});
     test.skip('GET single includes rows (skipped)', () => {});
     test.skip('DELETE removes (skipped)', () => {});
+    test.skip('PATCH /api/runs/:id — notes: sets note (skipped)', () => {});
+    test.skip('PATCH /api/runs/:id — notes: clears note (skipped)', () => {});
+    test.skip('PATCH /api/runs/:id — notes: 404 for missing run (skipped)', () => {});
+    test.skip('PATCH /api/runs/:id — notes: 400 for non-string (skipped)', () => {});
   });
 }

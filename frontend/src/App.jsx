@@ -14,13 +14,24 @@ import AddressBook from './components/AddressBook.jsx'
 import ImportExportModal from './components/ImportExportModal.jsx'
 import QueryPreviewModal from './components/QueryPreviewModal.jsx'
 import EndpointProfilesModal from './components/EndpointProfilesModal.jsx'
+import ReportsPanel from './components/ReportsPanel.jsx'
 import { createRun, listAddressLabels, updateQuery, createQuery, updateSettings } from './api/client.js'
+
+function divisorsFromFieldMeta(fm) {
+  const d = {}
+  for (const [col, meta] of Object.entries(fm || {})) {
+    if (meta?.decimals === 6) d[col] = '1e6'
+    else if (meta?.decimals === 18) d[col] = '1e18'
+  }
+  return d
+}
 
 export default function App() {
   const [startDate, setStartDate] = useState(null)
   const [endDate, setEndDate] = useState(null)
   const [selectedQuery, setSelectedQuery] = useState(null)
-  const [tab, setTab] = useState('editor') // 'editor' | 'results' | 'compare'
+  const [tab, setTab] = useState('editor') // 'editor' | 'results' | 'compare' | 'reports'
+  const [colDivisors, setColDivisors] = useState({})
   const [running, setRunning] = useState(false)
   const [currentRun, setCurrentRun] = useState(null)
   const [runError, setRunError] = useState(null)
@@ -48,6 +59,8 @@ export default function App() {
     setCurrentRun(null)
     setRunError(null)
     setActiveFilters({})
+    const fm = typeof query?.field_meta === 'object' ? query.field_meta : {}
+    setColDivisors(divisorsFromFieldMeta(fm))
     setTab('editor')
     setHistoryOpen(false)
   }, [])
@@ -57,6 +70,7 @@ export default function App() {
     setCurrentRun(null)
     setRunError(null)
     setPrefillGql(null)
+    setColDivisors({})
     setTab('editor')
   }, [])
 
@@ -108,6 +122,29 @@ export default function App() {
       setSidebarRefresh(n => n + 1)
     }
     return result.ok
+  }, [selectedQuery])
+
+  const handleDivisorChange = useCallback(async (newDivisors) => {
+    setColDivisors(newDivisors)
+    if (!selectedQuery?.id) return
+    const currentMeta = typeof selectedQuery.field_meta === 'object'
+      ? JSON.parse(JSON.stringify(selectedQuery.field_meta))
+      : {}
+    // Update all columns that have a divisor set
+    for (const [col, div] of Object.entries(newDivisors)) {
+      if (!currentMeta[col]) currentMeta[col] = {}
+      if (div === '1e6') currentMeta[col].decimals = 6
+      else if (div === '1e18') currentMeta[col].decimals = 18
+      else delete currentMeta[col].decimals
+    }
+    // Clear decimals for cols previously tracked but now absent from newDivisors
+    for (const col of Object.keys(currentMeta)) {
+      if (!(col in newDivisors) && currentMeta[col]?.decimals != null) {
+        delete currentMeta[col].decimals
+      }
+    }
+    const result = await updateQuery(selectedQuery.id, { ...selectedQuery, field_meta: currentMeta })
+    if (result.ok && result.data) setSelectedQuery(result.data)
   }, [selectedQuery])
 
   const handleRun = useCallback(async (queryDef) => {
@@ -291,6 +328,7 @@ export default function App() {
           <div className="tab-bar">
             <button className={tab === 'editor' ? 'active' : ''} onClick={() => setTab('editor')}>Editor</button>
             <button className={tab === 'results' ? 'active' : ''} onClick={() => setTab('results')}>Results</button>
+            <button className={tab === 'reports' ? 'active' : ''} onClick={() => setTab('reports')}>Reports</button>
             {compareRuns && (
               <button className={tab === 'compare' ? 'active' : ''} onClick={() => setTab('compare')}>Compare</button>
             )}
@@ -430,6 +468,8 @@ export default function App() {
                   addressLabels={addressLabels}
                   chartViews={selectedQuery?.chart_views || []}
                   onSaveView={selectedQuery?.id ? handleSaveChartView : undefined}
+                  colDivisors={colDivisors}
+                  onDivisorChange={handleDivisorChange}
                 />
               )}
 
@@ -449,6 +489,11 @@ export default function App() {
               keyField={selectedQuery?.key_field || 'id'}
               fieldMeta={fieldMeta}
             />
+          )}
+
+          {/* Reports tab */}
+          {tab === 'reports' && (
+            <ReportsPanel startDate={startDate} endDate={endDate} />
           )}
         </div>
       </div>
@@ -507,9 +552,8 @@ export default function App() {
 /**
  * Inner component for table/chart subtabs.
  */
-function ResultsView({ rows, fieldMeta, keyField, addressLabels = [], chartViews = [], onSaveView }) {
+function ResultsView({ rows, fieldMeta, keyField, addressLabels = [], chartViews = [], onSaveView, colDivisors = {}, onDivisorChange }) {
   const [view, setView] = useState('table')
-  const [colDivisors, setColDivisors] = useState({})
 
   return (
     <div>
@@ -517,8 +561,8 @@ function ResultsView({ rows, fieldMeta, keyField, addressLabels = [], chartViews
         <button className={view === 'table' ? 'active' : ''} onClick={() => setView('table')}>Table</button>
         <button className={view === 'chart' ? 'active' : ''} onClick={() => setView('chart')}>Chart</button>
       </div>
-      {view === 'table' && <ResultsTable rows={rows} fieldMeta={fieldMeta} keyField={keyField} colDivisors={colDivisors} onDivisorChange={setColDivisors} addressLabels={addressLabels} />}
-      {view === 'chart' && <ResultsChart rows={rows} fieldMeta={fieldMeta} keyField={keyField} colDivisors={colDivisors} onDivisorChange={setColDivisors} chartViews={chartViews} onSaveView={onSaveView} />}
+      {view === 'table' && <ResultsTable rows={rows} fieldMeta={fieldMeta} keyField={keyField} colDivisors={colDivisors} onDivisorChange={onDivisorChange} addressLabels={addressLabels} />}
+      {view === 'chart' && <ResultsChart rows={rows} fieldMeta={fieldMeta} keyField={keyField} colDivisors={colDivisors} onDivisorChange={onDivisorChange} chartViews={chartViews} onSaveView={onSaveView} />}
     </div>
   )
 }
