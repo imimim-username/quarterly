@@ -82,6 +82,57 @@ This starts both servers concurrently:
 
 ---
 
+## Walkthrough for new users
+
+Here's a typical workflow from first run to a chart with filtered data.
+
+### 1. Run a query
+
+The left sidebar lists all saved queries grouped by category. Click any query to select it — its definition loads into the editor on the right. Set a date range at the top if the query uses date variables, then click **Run**. The results appear in the **Results** tab as a table.
+
+### 2. Filter the data
+
+Above the table you'll see **filter chips** for each column that has repeated values. Click a chip value to activate it — results narrow to only rows matching that value. Common starting point: click a **chain** chip to focus on one chain.
+
+When you filter by a single chain, address columns in the remaining filter chips will resolve to human-readable labels from the Address Book (if you've set them up) so you can identify contracts by name rather than raw hex address.
+
+Click additional chip values to add more filters. Click an active value again to remove it.
+
+### 3. Read the table
+
+- **Timestamp fields** are displayed as formatted local dates.
+- **Decimal fields** (assets, shares, balances) are scaled by the field's configured divisor — so an 18-decimal token value like `1000000000000000000` displays as `1.0`.
+- **Address fields** that have a matching Address Book entry show the label instead of the raw address. Hover to see the raw address; click to copy it to the clipboard.
+
+### 4. Cycle number formats
+
+For numeric columns you can click the small divisor label on a column chip (or in a chart Y-axis selector) to cycle through display formats:
+
+- **raw** — the integer as stored
+- **÷1e6** — divide by 1,000,000 (useful for USDC and other 6-decimal tokens)
+- **÷1e18** — divide by 10^18 (useful for ETH, DAI, and most ERC-20 tokens)
+
+### 5. View a chart
+
+Click the **Chart** tab. If the query has a saved chart view, open the **Load view** dropdown and select it — the chart will configure itself automatically with the right X field, Y fields, chart type, and divisors.
+
+To build a chart from scratch:
+
+1. Pick an **X Field** (usually `timestamp` for time series, or a category field like `chain`).
+2. Add columns to **Left Y axis** and/or **Right Y axis** from the dropdowns.
+3. Choose the series type (bar, line, area) from the selector next to each axis label.
+4. If X is a timestamp, use **Group By** to bucket rows by day, week, or month.
+5. Toggle **cumulative** mode on a Y axis to show running totals instead of per-period values.
+6. Click **Save view** to name and persist this configuration so you can reload it next time.
+
+Use the ECharts toolbar (top-right of the chart) to zoom, reset, or download the chart as a PNG.
+
+### 6. Compare two runs
+
+Run the same query for a different date range (or after new data has been indexed). Open the **History** drawer, pin two runs, then click **Compare**. The Compare view matches rows by the query's key field and shows a delta column with absolute and percentage change for every numeric field.
+
+---
+
 ## Query definitions
 
 Each query stores:
