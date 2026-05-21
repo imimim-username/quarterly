@@ -39,6 +39,7 @@ export const listRuns = (queryId, limit = 20, offset = 0) =>
   request('GET', `/runs?query_id=${queryId}&limit=${limit}&offset=${offset}`);
 export const getRun = (id) => request('GET', `/runs/${id}`);
 export const deleteRun = (id) => request('DELETE', `/runs/${id}`);
+export const patchRun = (id, body) => request('PATCH', `/runs/${id}`, body);
 
 // Reports
 export const listReports = () => request('GET', '/reports');

@@ -13,7 +13,8 @@ import SchemaExplorer from './components/SchemaExplorer.jsx'
 import AddressBook from './components/AddressBook.jsx'
 import ImportExportModal from './components/ImportExportModal.jsx'
 import QueryPreviewModal from './components/QueryPreviewModal.jsx'
-import { createRun, listAddressLabels, updateQuery } from './api/client.js'
+import EndpointProfilesModal from './components/EndpointProfilesModal.jsx'
+import { createRun, listAddressLabels, updateQuery, createQuery, updateSettings } from './api/client.js'
 
 export default function App() {
   const [startDate, setStartDate] = useState(null)
@@ -31,6 +32,8 @@ export default function App() {
   const [addressBookOpen, setAddressBookOpen] = useState(false)
   const [importExportOpen, setImportExportOpen] = useState(false)
   const [queryPreviewOpen, setQueryPreviewOpen] = useState(false)
+  const [endpointProfilesOpen, setEndpointProfilesOpen] = useState(false)
+  const [endpointVersion, setEndpointVersion] = useState(0)
   const [addressLabels, setAddressLabels] = useState([])
   const [prefillGql, setPrefillGql] = useState(null)
 
@@ -75,6 +78,22 @@ export default function App() {
     setSelectedQuery(null)
     setCurrentRun(null)
     setSidebarRefresh(n => n + 1)
+  }, [])
+
+  const handleCloneQuery = useCallback(async (query) => {
+    const { name, ...rest } = query
+    let newName = name + ' (copy)'
+    const result = await createQuery({ ...rest, name: newName })
+    if (result.ok) {
+      setSidebarRefresh(n => n + 1)
+    }
+  }, [])
+
+  const handleSelectEndpointProfile = useCallback(async (profile) => {
+    if (profile.url) {
+      await updateSettings({ endpoint: profile.url })
+      setEndpointVersion(v => v + 1) // force EndpointBar to remount & re-read
+    }
   }, [])
 
   const handleSaveChartView = useCallback(async (view) => {
@@ -215,13 +234,20 @@ export default function App() {
         <span style={{ fontWeight: 700, fontSize: 15, color: 'var(--color-accent)', flexShrink: 0 }}>
           quarterly
         </span>
-        <EndpointBar onExplore={() => setSchemaExplorerOpen(true)} />
+        <EndpointBar key={endpointVersion} onExplore={() => setSchemaExplorerOpen(true)} />
         <DateRangePicker
           startDate={startDate}
           endDate={endDate}
           onStartChange={setStartDate}
           onEndChange={setEndDate}
         />
+        <button
+          onClick={() => setEndpointProfilesOpen(true)}
+          style={{ flexShrink: 0, fontSize: 12, padding: '4px 10px' }}
+          title="Manage endpoint profiles"
+        >
+          Profiles
+        </button>
         <button
           onClick={() => setAddressBookOpen(true)}
           style={{ flexShrink: 0, fontSize: 12, padding: '4px 10px' }}
@@ -254,6 +280,7 @@ export default function App() {
             selectedQueryId={selectedQuery?.id}
             onSelectQuery={handleSelectQuery}
             onNewQuery={handleNewQuery}
+            onCloneQuery={handleCloneQuery}
             refreshTrigger={sidebarRefresh}
           />
         </div>
@@ -425,6 +452,14 @@ export default function App() {
           )}
         </div>
       </div>
+
+      {/* Endpoint profiles overlay */}
+      {endpointProfilesOpen && (
+        <EndpointProfilesModal
+          onClose={() => setEndpointProfilesOpen(false)}
+          onSelect={handleSelectEndpointProfile}
+        />
+      )}
 
       {/* Address book overlay */}
       {addressBookOpen && (
