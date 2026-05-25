@@ -13,7 +13,7 @@ describe('parseFormula', () => {
   })
 
   it('returns null for invalid syntax', () => {
-    // Unclosed parenthesis — expr-eval will throw
+    // Unclosed parenthesis — parser returns null
     expect(parseFormula('(a + b')).toBeNull()
   })
 
