@@ -252,19 +252,27 @@ export default function App() {
     setHistoryOpen(false)
   }
 
-  // Filter rows by date range + active field chips (all ANDed)
-  const filteredRows = useMemo(() => {
+  // Apply timestamp extraction on raw rows first so date range filtering can use it.
+  // If the query has no extraction config this is a no-op (returns the same array reference).
+  const extractedRows = useMemo(() => {
     if (!currentRun?.rows) return []
-    let rows = currentRun.rows
+    return applyTimestampExtraction(currentRun.rows, selectedQuery?.timestamp_extraction)
+  }, [currentRun?.rows, selectedQuery?.timestamp_extraction])
 
-    // Date range — assumes timestamp column is unix seconds (standard for current queries)
+  // Filter rows by date range + active field chips (all ANDed).
+  // When a timestamp_extraction is configured its outputName is used as the timestamp
+  // field for date filtering; otherwise falls back to the conventional 'timestamp' column.
+  const filteredRows = useMemo(() => {
+    let rows = extractedRows
+    const tsField = selectedQuery?.timestamp_extraction?.outputName || 'timestamp'
+
     if (startDate) {
       const s = startDate.getTime() / 1000
-      rows = rows.filter(r => r.timestamp == null || Number(r.timestamp) >= s)
+      rows = rows.filter(r => r[tsField] == null || Number(r[tsField]) >= s)
     }
     if (endDate) {
       const e = endDate.getTime() / 1000
-      rows = rows.filter(r => r.timestamp == null || Number(r.timestamp) <= e)
+      rows = rows.filter(r => r[tsField] == null || Number(r[tsField]) <= e)
     }
 
     // Field chip filters
@@ -276,18 +284,13 @@ export default function App() {
     }
 
     return rows
-  }, [currentRun, startDate, endDate, activeFilters])
+  }, [extractedRows, startDate, endDate, activeFilters, selectedQuery?.timestamp_extraction])
 
-  // Apply timestamp extraction before computed columns so formulas can reference it
-  const extractedRows = useMemo(() => {
-    return applyTimestampExtraction(filteredRows, selectedQuery?.timestamp_extraction)
-  }, [filteredRows, selectedQuery?.timestamp_extraction])
-
-  // Apply computed columns on top of the extracted rows
+  // Apply computed columns on top of the filtered+extracted rows
   const computedRows = useMemo(() => {
     const defs = Array.isArray(selectedQuery?.computed_columns) ? selectedQuery.computed_columns : []
-    return applyComputedColumns(extractedRows, defs, colDivisors)
-  }, [extractedRows, selectedQuery?.computed_columns, colDivisors])
+    return applyComputedColumns(filteredRows, defs, colDivisors)
+  }, [filteredRows, selectedQuery?.computed_columns, colDivisors])
 
   // True when the current date pickers extend *beyond* what the run fetched from the
   // server — i.e. the results may be missing data and the user should re-run.
@@ -513,8 +516,11 @@ export default function App() {
                 </div>
               )}
 
-              {/* Warning: no timestamp field */}
-              {currentRun?.rows?.length > 0 && !('timestamp' in (currentRun.rows[0] ?? {})) && (
+              {/* Warning: no timestamp field (suppressed when timestamp extraction is configured) */}
+              {currentRun?.rows?.length > 0
+                && !selectedQuery?.timestamp_extraction
+                && !('timestamp' in (currentRun.rows[0] ?? {}))
+                && (
                 <div className="warning-banner">
                   No <code>timestamp</code> field found in results — date range filtering will have no effect. Add <code>timestamp</code> to your query's field selection.
                 </div>
