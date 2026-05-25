@@ -17,6 +17,7 @@ import EndpointProfilesModal from './components/EndpointProfilesModal.jsx'
 import ReportsPanel from './components/ReportsPanel.jsx'
 import { createRun, listAddressLabels, updateQuery, createQuery, updateSettings, listRuns, getRun } from './api/client.js'
 import { applyComputedColumns, computedFieldMeta } from './utils/computedColumns.js'
+import { applyTimestampExtraction, timestampExtractionMeta } from './utils/timestampExtraction.js'
 
 function divisorsFromFieldMeta(fm) {
   const d = {}
@@ -82,7 +83,12 @@ export default function App() {
     setRunError(null)
     setActiveFilters({})
     const fm = typeof query?.field_meta === 'object' ? query.field_meta : {}
-    setColDivisors(divisorsFromFieldMeta(fm))
+    const initialDivisors = divisorsFromFieldMeta(fm)
+    // Parsed timestamp columns default to 'datetime' divisor automatically
+    if (query?.timestamp_extraction?.outputName) {
+      initialDivisors[query.timestamp_extraction.outputName] = 'datetime'
+    }
+    setColDivisors(initialDivisors)
     setTab('editor')
     setHistoryOpen(false)
 
@@ -272,11 +278,16 @@ export default function App() {
     return rows
   }, [currentRun, startDate, endDate, activeFilters])
 
-  // Apply computed columns on top of the filtered rows
+  // Apply timestamp extraction before computed columns so formulas can reference it
+  const extractedRows = useMemo(() => {
+    return applyTimestampExtraction(filteredRows, selectedQuery?.timestamp_extraction)
+  }, [filteredRows, selectedQuery?.timestamp_extraction])
+
+  // Apply computed columns on top of the extracted rows
   const computedRows = useMemo(() => {
     const defs = Array.isArray(selectedQuery?.computed_columns) ? selectedQuery.computed_columns : []
-    return applyComputedColumns(filteredRows, defs, colDivisors)
-  }, [filteredRows, selectedQuery?.computed_columns, colDivisors])
+    return applyComputedColumns(extractedRows, defs, colDivisors)
+  }, [extractedRows, selectedQuery?.computed_columns, colDivisors])
 
   // True when the current date pickers extend *beyond* what the run fetched from the
   // server — i.e. the results may be missing data and the user should re-run.
@@ -303,9 +314,11 @@ export default function App() {
 
   const fieldMeta = useMemo(() => {
     const base = typeof selectedQuery?.field_meta === 'object' ? selectedQuery.field_meta : {}
+    const tsExtracted = timestampExtractionMeta(selectedQuery?.timestamp_extraction)
     const computed = computedFieldMeta(selectedQuery?.computed_columns)
-    return { ...base, ...computed }
-  }, [selectedQuery?.field_meta, selectedQuery?.computed_columns])
+    // Order matters: tsExtracted before computed so computed columns can shadow it if needed
+    return { ...base, ...tsExtracted, ...computed }
+  }, [selectedQuery?.field_meta, selectedQuery?.timestamp_extraction, selectedQuery?.computed_columns])
 
   return (
     <div className="app-layout">

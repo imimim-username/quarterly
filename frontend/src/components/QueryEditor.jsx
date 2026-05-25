@@ -9,6 +9,14 @@ const PAGINATION_STYLES = ['offset', 'cursor', 'none']
 const DATE_FORMATS = ['unix_seconds', 'unix_ms', 'iso8601']
 const CHAIN_MODES = ['filter', 'variable', 'none']
 
+const DEFAULT_TS_EXTRACTION = {
+  sourceField: '',
+  delimiter: '/',
+  position: 'after',
+  outputName: 'parsed_timestamp',
+  outputLabel: 'Timestamp',
+}
+
 function emptyQuery() {
   return {
     name: '',
@@ -27,6 +35,7 @@ function emptyQuery() {
     variable_defs: [],
     field_meta: {},
     computed_columns: [],
+    timestamp_extraction: null,
     is_builtin: 0,
   }
 }
@@ -79,6 +88,9 @@ export default function QueryEditor({ query, prefillGql, onSave, onDelete, onRun
       field_meta: JSON.stringify(field_meta),
       variable_defs: JSON.stringify(form.variable_defs),
       computed_columns: JSON.stringify(form.computed_columns || []),
+      timestamp_extraction: form.timestamp_extraction
+        ? JSON.stringify(form.timestamp_extraction)
+        : null,
     }
 
     setSaving(true)
@@ -218,6 +230,63 @@ export default function QueryEditor({ query, prefillGql, onSave, onDelete, onRun
           defs={form.computed_columns || []}
           onChange={defs => set('computed_columns', defs)}
         />
+      </div>
+
+      <div className="form-group">
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <input
+            type="checkbox"
+            checked={!!form.timestamp_extraction}
+            onChange={e => set('timestamp_extraction', e.target.checked ? { ...DEFAULT_TS_EXTRACTION } : null)}
+          />
+          Parse Timestamp from Field
+        </label>
+        {form.timestamp_extraction && (
+          <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1.5fr 0.6fr 0.8fr 1fr 1fr', gap: 8 }}>
+            <div className="form-group" style={{ margin: 0 }}>
+              <label style={{ fontSize: 11 }}>Source Field</label>
+              <input
+                value={form.timestamp_extraction.sourceField}
+                onChange={e => set('timestamp_extraction', { ...form.timestamp_extraction, sourceField: e.target.value })}
+                placeholder="id"
+              />
+            </div>
+            <div className="form-group" style={{ margin: 0 }}>
+              <label style={{ fontSize: 11 }}>Delimiter</label>
+              <input
+                value={form.timestamp_extraction.delimiter}
+                onChange={e => set('timestamp_extraction', { ...form.timestamp_extraction, delimiter: e.target.value })}
+                placeholder="/"
+              />
+            </div>
+            <div className="form-group" style={{ margin: 0 }}>
+              <label style={{ fontSize: 11 }}>Position</label>
+              <select
+                value={form.timestamp_extraction.position}
+                onChange={e => set('timestamp_extraction', { ...form.timestamp_extraction, position: e.target.value })}
+              >
+                <option value="after">After</option>
+                <option value="before">Before</option>
+              </select>
+            </div>
+            <div className="form-group" style={{ margin: 0 }}>
+              <label style={{ fontSize: 11 }}>Output Field Name</label>
+              <input
+                value={form.timestamp_extraction.outputName}
+                onChange={e => set('timestamp_extraction', { ...form.timestamp_extraction, outputName: e.target.value })}
+                placeholder="parsed_timestamp"
+              />
+            </div>
+            <div className="form-group" style={{ margin: 0 }}>
+              <label style={{ fontSize: 11 }}>Output Label</label>
+              <input
+                value={form.timestamp_extraction.outputLabel}
+                onChange={e => set('timestamp_extraction', { ...form.timestamp_extraction, outputLabel: e.target.value })}
+                placeholder="Timestamp"
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       <div style={{ display: 'flex', gap: 8, paddingBottom: 16 }}>

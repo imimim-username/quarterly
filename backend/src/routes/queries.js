@@ -71,7 +71,7 @@ function validateQueryBody(body) {
 }
 
 function rowToQuery(row) {
-  let variable_defs, field_meta, chart_views, computed_columns;
+  let variable_defs, field_meta, chart_views, computed_columns, timestamp_extraction;
   try {
     variable_defs = JSON.parse(row.variable_defs);
   } catch (e) {
@@ -92,7 +92,12 @@ function rowToQuery(row) {
   } catch (e) {
     computed_columns = [];
   }
-  return { ...row, variable_defs, field_meta, chart_views, computed_columns };
+  try {
+    timestamp_extraction = row.timestamp_extraction ? JSON.parse(row.timestamp_extraction) : null;
+  } catch (e) {
+    timestamp_extraction = null;
+  }
+  return { ...row, variable_defs, field_meta, chart_views, computed_columns, timestamp_extraction };
 }
 
 module.exports = function queriesRoutes(db) {
@@ -159,15 +164,20 @@ module.exports = function queriesRoutes(db) {
       is_builtin = 0,
       chart_views = '[]',
       computed_columns = '[]',
+      timestamp_extraction = null,
     } = req.body;
+
+    const tsRaw = timestamp_extraction == null ? null
+      : typeof timestamp_extraction === 'string' ? timestamp_extraction
+      : JSON.stringify(timestamp_extraction);
 
     try {
       const stmt = db.prepare(`
         INSERT INTO queries (name, description, category, gql, variable_defs, result_path,
           pagination_style, cursor_path, has_next_path, date_format, chain_mode, chain_var_name,
           chain_field, field_meta, key_field, is_builtin, chart_views, computed_columns,
-          created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          timestamp_extraction, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       const info = stmt.run(
         name, description, category, gql,
@@ -178,6 +188,7 @@ module.exports = function queriesRoutes(db) {
         key_field, is_builtin ? 1 : 0,
         typeof chart_views === 'string' ? chart_views : JSON.stringify(chart_views),
         typeof computed_columns === 'string' ? computed_columns : JSON.stringify(computed_columns),
+        tsRaw,
         now, now
       );
       const created = db.prepare('SELECT * FROM queries WHERE id = ?').get(info.lastInsertRowid);
@@ -202,15 +213,19 @@ module.exports = function queriesRoutes(db) {
       name, description, category, gql, variable_defs, result_path,
       pagination_style, cursor_path, has_next_path, date_format,
       chain_mode, chain_var_name, chain_field, field_meta, key_field, is_builtin,
-      chart_views, computed_columns,
+      chart_views, computed_columns, timestamp_extraction,
     } = merged;
+
+    const tsRawPut = timestamp_extraction == null ? null
+      : typeof timestamp_extraction === 'string' ? timestamp_extraction
+      : JSON.stringify(timestamp_extraction);
 
     try {
       db.prepare(`
         UPDATE queries SET name=?, description=?, category=?, gql=?, variable_defs=?,
           result_path=?, pagination_style=?, cursor_path=?, has_next_path=?, date_format=?,
           chain_mode=?, chain_var_name=?, chain_field=?, field_meta=?, key_field=?,
-          is_builtin=?, chart_views=?, computed_columns=?, updated_at=?
+          is_builtin=?, chart_views=?, computed_columns=?, timestamp_extraction=?, updated_at=?
         WHERE id=?
       `).run(
         name, description, category, gql,
@@ -221,6 +236,7 @@ module.exports = function queriesRoutes(db) {
         key_field, is_builtin ? 1 : 0,
         typeof chart_views === 'string' ? chart_views : JSON.stringify(chart_views || []),
         typeof computed_columns === 'string' ? computed_columns : JSON.stringify(computed_columns || []),
+        tsRawPut,
         now,
         req.params.id
       );

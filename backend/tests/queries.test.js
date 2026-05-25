@@ -42,7 +42,8 @@ if (nativeAvailable) {
         key_field TEXT NOT NULL DEFAULT 'id', is_builtin INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
         chart_views TEXT NOT NULL DEFAULT '[]',
-        computed_columns TEXT NOT NULL DEFAULT '[]'
+        computed_columns TEXT NOT NULL DEFAULT '[]',
+        timestamp_extraction TEXT
       );
       INSERT OR IGNORE INTO settings (key, value) VALUES ('builtin_imported', '0');
     `);
