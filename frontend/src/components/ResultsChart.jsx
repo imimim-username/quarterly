@@ -154,7 +154,7 @@ function makeSeries(fields, colorOffset, yAxisIndex, seriesType, chartData, fiel
   })
 }
 
-function YAxisSelector({ label, fields, setFields, allFields, colorOffset, fieldMeta, seriesType, setSeriesType, yMode, setYMode, showYMode, aggregation, setAggregation, showAggregation, colDivisors, onDivisorChange }) {
+function YAxisSelector({ label, fields, setFields, allFields, colorOffset, fieldMeta, seriesType, setSeriesType, yMode, setYMode, showYMode, colDivisors, onDivisorChange }) {
   const available = allFields.filter(c => !fields.includes(c))
 
   const add = (col) => { if (col) setFields(prev => [...prev, col]) }
@@ -185,16 +185,6 @@ function YAxisSelector({ label, fields, setFields, allFields, colorOffset, field
             style={{ fontSize: 11, padding: '1px 4px' }}
           >
             {Y_MODE_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
-          </select>
-        )}
-        {showAggregation && (
-          <select
-            value={aggregation}
-            onChange={e => setAggregation(e.target.value)}
-            style={{ fontSize: 11, padding: '1px 4px' }}
-            title="Aggregation method for grouped values"
-          >
-            {AGGREGATION_OPTIONS.map(a => <option key={a} value={a}>{a}</option>)}
           </select>
         )}
       </label>
@@ -455,9 +445,6 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
           yMode={leftYMode}
           setYMode={setLeftYMode}
           showYMode={isTimestampX}
-          aggregation={leftAggregation}
-          setAggregation={setLeftAggregation}
-          showAggregation={isTimestampX}
           colDivisors={colDivisors}
           onDivisorChange={onDivisorChange}
         />
@@ -477,9 +464,6 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
           yMode={rightYMode}
           setYMode={setRightYMode}
           showYMode={isTimestampX}
-          aggregation={rightAggregation}
-          setAggregation={setRightAggregation}
-          showAggregation={isTimestampX}
           colDivisors={colDivisors}
           onDivisorChange={onDivisorChange}
         />
@@ -487,21 +471,47 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
         {isTimestampX && (
           <>
             <div style={{ width: 1, background: 'var(--color-border)', alignSelf: 'stretch', margin: '0 4px' }} />
-            <div className="form-group" style={{ minWidth: 110, margin: 0 }}>
-              <label>Group By</label>
-              <select value={groupBy} onChange={e => setGroupBy(e.target.value)}>
-                {GROUP_BY_OPTIONS.map(g => <option key={g} value={g}>{g}</option>)}
-              </select>
-            </div>
-            <div className="form-group" style={{ margin: 0 }}>
-              <label>X Order</label>
-              <button
-                onClick={() => setXSortDir(d => d === 'asc' ? 'desc' : 'asc')}
-                style={{ background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 4, padding: '4px 10px', cursor: 'pointer', fontSize: 13 }}
-                title={xSortDir === 'asc' ? 'Ascending — click to switch to descending' : 'Descending — click to switch to ascending'}
-              >
-                {xSortDir === 'asc' ? '↑ Asc' : '↓ Desc'}
-              </button>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+                <div className="form-group" style={{ minWidth: 100, margin: 0 }}>
+                  <label>Group By</label>
+                  <select value={groupBy} onChange={e => setGroupBy(e.target.value)}>
+                    {GROUP_BY_OPTIONS.map(g => <option key={g} value={g}>{g}</option>)}
+                  </select>
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label style={{ opacity: groupBy === 'none' ? 0.45 : 1 }}>Left agg.</label>
+                  <select
+                    value={leftAggregation}
+                    onChange={e => setLeftAggregation(e.target.value)}
+                    disabled={groupBy === 'none'}
+                    style={{ opacity: groupBy === 'none' ? 0.45 : 1 }}
+                  >
+                    {AGGREGATION_OPTIONS.map(a => <option key={a} value={a}>{a}</option>)}
+                  </select>
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label style={{ opacity: groupBy === 'none' ? 0.45 : 1 }}>Right agg.</label>
+                  <select
+                    value={rightAggregation}
+                    onChange={e => setRightAggregation(e.target.value)}
+                    disabled={groupBy === 'none'}
+                    style={{ opacity: groupBy === 'none' ? 0.45 : 1 }}
+                  >
+                    {AGGREGATION_OPTIONS.map(a => <option key={a} value={a}>{a}</option>)}
+                  </select>
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>X Order</label>
+                  <button
+                    onClick={() => setXSortDir(d => d === 'asc' ? 'desc' : 'asc')}
+                    style={{ background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 4, padding: '4px 10px', cursor: 'pointer', fontSize: 13, width: '100%' }}
+                    title={xSortDir === 'asc' ? 'Ascending — click to switch to descending' : 'Descending — click to switch to ascending'}
+                  >
+                    {xSortDir === 'asc' ? '↑ Asc' : '↓ Desc'}
+                  </button>
+                </div>
+              </div>
             </div>
           </>
         )}
