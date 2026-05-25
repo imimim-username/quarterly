@@ -11,10 +11,12 @@ You paste a Ponder endpoint URL into the app, pick a date range, and run named q
 **Key capabilities:**
 
 - **Named query library** — define GraphQL queries with full metadata: pagination style, date format, field decimal scaling, chain filtering mode. Queries are saved to a local SQLite database and persist across sessions.
+- **Computed columns** — define virtual columns in the Query Editor with a name, label, and arithmetic formula referencing other row fields. Computed columns appear in result tables and can be used as chart axes.
+- **Timestamp extraction** — per-query configuration to parse a Unix timestamp out of an existing string field (specify source field, delimiter, position, and output field name). The extracted value behaves like a native datetime: raw/datetime toggle, chart X axis with Group By bucketing, and date range filtering.
 - **Auto-pagination** — offset-based and cursor-based pagination handled automatically. Configure `result_path`, `pagination_style`, and cursor paths; the engine fetches all pages and aggregates the rows.
 - **Run history** — every successful query execution is stored with its parameters, row count, page count, and full result set. Load any past run without re-fetching. Add notes to any run for future reference.
 - **Cross-quarter comparison** — pin two historical runs side by side. Delta columns show absolute change and percentage change per numeric field. Rows matched by a configurable key field.
-- **Charts** — bar, line, and area charts via ECharts. Dual Y-axis support, group-by time buckets (day/week/month), cumulative mode, per-field decimal divisors. Save named chart configurations (views) per query and restore them in one click. Export any chart as a PNG.
+- **Charts** — bar, line, and area charts via ECharts. Dual Y-axis support, group-by time buckets (day/week/month), aggregation controls (sum, mean, median, min, max), X-axis sort order toggle, per-axis scale-to-range option, cumulative mode, per-field decimal divisors. Save named chart configurations (views) per query and restore them in one click. Export any chart as a PNG.
 - **Full-text search & column controls** — filter displayed rows in real time with the search bar. Toggle column visibility with the ⚙ button. Copy the table as Markdown, HTML, or TSV.
 - **Stats bar** — pick any numeric column and instantly see sum, average, min, and max. Divisors (÷1e6 / ÷1e18) applied to the table are also applied to the stats so the numbers always match.
 - **Filter chips** — click any column value in the results to add it as a filter chip. Address columns resolve to human-readable labels from the Address Book.
@@ -189,9 +191,11 @@ To build a chart from scratch:
 1. Pick an **X Field** (usually `timestamp` for time series, or a category field like `chain`).
 2. Add columns to **Left Y axis** and/or **Right Y axis** from the dropdowns.
 3. Choose the series type (bar, line, area) next to each axis label.
-4. If X is a timestamp, use **Group By** to bucket rows by day, week, or month.
-5. Toggle **cumulative** mode on a Y axis to show running totals instead of per-period values.
-6. Click **Save view** to name and persist this configuration so you can reload it next time.
+4. If X is a timestamp, use **Group By** to bucket rows by day, week, or month. The **Left agg.** and **Right agg.** dropdowns (sum, mean, median, min, max) control how values are aggregated per bucket; they are enabled whenever Group By is active.
+5. Use the **X Order** button (↑ Asc / ↓ Desc) to set the sort direction of X axis values.
+6. Enable **scale** on a Y axis selector to auto-fit the axis to the data range instead of starting at zero — useful when values cluster near the same number.
+7. Toggle **cumulative** mode on a Y axis to show running totals instead of per-period values.
+8. Click **Save view** to name and persist this configuration so you can reload it next time.
 
 Use the ECharts toolbar (top-right of the chart) to zoom, reset, or download the chart as a PNG.
 
@@ -236,6 +240,8 @@ Each query stores:
 | `variable_defs` | JSON schema for all GraphQL variables (dates, pagination, user inputs) |
 | `field_meta` | Per-field metadata: decimal scaling, labels, timestamp type |
 | `chart_views` | Saved chart configurations (named snapshots of chart settings) |
+| `computed_columns` | Virtual columns defined in the Query Editor: name, label, and arithmetic formula referencing row fields |
+| `timestamp_extraction` | Per-query config to parse a Unix timestamp from a string field: source field, delimiter, position, output field name, and output label |
 
 ### Variable sources
 
@@ -304,13 +310,15 @@ Labels appear automatically in result tables wherever a cell value is a 40-chara
 The chart view renders an ECharts dual-axis combo chart from query results. Controls:
 
 - **X Field** — select any result column as the X axis
-- **Left / Right Y axes** — add columns as series; choose bar, line, or area type; toggle cumulative mode; cycle decimal divisors (raw / ÷1e6 / ÷1e18)
+- **Left / Right Y axes** — add columns as series; choose bar, line, or area type; toggle cumulative mode; cycle decimal divisors (raw / ÷1e6 / ÷1e18); enable **scale** to auto-fit the axis to the data range
 - **Group By** — when X is a timestamp field, bucket rows by day, week, or month
+- **Left agg. / Right agg.** — aggregation function applied per Group By bucket: sum, mean, median, min, or max. Always visible when X is a timestamp/datetime field; greyed out when Group By is "none"
+- **X Order** — toggle between ascending (↑) and descending (↓) sort of X axis values
 - **Legend** — toggle the series legend
 
 ### Chart views
 
-Save the current chart configuration under a name with **Save view**. The view captures X field, Y fields, chart types, group-by, Y modes, divisors, and legend state. Load any saved view from the dropdown to restore the configuration instantly. Views are stored per query.
+Save the current chart configuration under a name with **Save view**. The view captures X field, Y fields, chart types, group-by, aggregations (`leftAggregation`, `rightAggregation`), scale flags (`leftScaleY`, `rightScaleY`), X sort direction (`xSortDir`), Y modes, divisors, and legend state. Load any saved view from the dropdown to restore the configuration instantly. Views are stored per query.
 
 ---
 
@@ -367,7 +375,7 @@ Choose what to include: individual queries (grouped by category, each individual
 
 Drop or pick an export file. A preview step shows every item with a **New** or **Conflict** badge. For each item you can choose:
 
-- **Overwrite** — replace the existing record. For queries, select which field groups to overwrite (GraphQL, Variables, Display, Info, Execution) independently.
+- **Overwrite** — replace the existing record. For queries, select which field groups to overwrite (GraphQL, Variables, Display, Info, Execution) independently. The **Display** group includes computed columns; the **Execution** group includes timestamp extraction.
 - **Create new** — insert with an auto-suffixed name (`(imported)`, `(imported 2)`, …), preserving the existing record.
 - **Skip** — leave the existing record untouched.
 
@@ -564,6 +572,13 @@ Test files in `frontend/src/components/__tests__/`:
 | `EndpointBar.test.jsx` | Ping flow, schema explorer button visibility, URL validation |
 | `SchemaExplorer.test.jsx` | Render, use-query button state, onClose |
 
+Test files in `frontend/src/utils/__tests__/`:
+
+| File | What it covers |
+|---|---|
+| `computedColumns.test.js` | Formula parsing, field reference resolution, arithmetic operators, safe evaluation (no eval) |
+| `timestampExtraction.test.js` | Delimiter splitting, position selection, Unix timestamp parsing, output field construction |
+
 ---
 
 ## Project layout
@@ -585,7 +600,9 @@ quarterly/
 │   │   │   ├── 001_initial.js
 │   │   │   ├── 002_address_labels.js
 │   │   │   ├── 003_chart_views.js
-│   │   │   └── 004_endpoints_and_run_notes.js
+│   │   │   ├── 004_endpoints_and_run_notes.js
+│   │   │   ├── 005_computed_columns.js
+│   │   │   └── 006_timestamp_extraction.js
 │   │   └── routes/
 │   │       ├── queries.js
 │   │       ├── runs.js
@@ -615,7 +632,12 @@ quarterly/
 │       ├── api/
 │       │   └── client.js
 │       ├── utils/
-│       │   └── addressLabels.js
+│       │   ├── addressLabels.js
+│       │   ├── computedColumns.js
+│       │   ├── timestampExtraction.js
+│       │   └── __tests__/
+│       │       ├── computedColumns.test.js
+│       │       └── timestampExtraction.test.js
 │       └── components/
 │           ├── EndpointBar.jsx
 │           ├── DateRangePicker.jsx

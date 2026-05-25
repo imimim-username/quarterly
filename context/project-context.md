@@ -61,7 +61,8 @@ quarterly/                          npm workspace root
 │   │   │   ├── 002_address_labels.js  address_labels table
 │   │   │   ├── 003_chart_views.js  ALTER queries ADD COLUMN chart_views
 │   │   │   ├── 004_endpoints_and_run_notes.js  endpoints table + runs.notes column
-│   │   │   └── 005_computed_columns.js  ALTER queries ADD COLUMN computed_columns
+│   │   │   ├── 005_computed_columns.js  ALTER queries ADD COLUMN computed_columns
+│   │   │   └── 006_timestamp_extraction.js  ALTER queries ADD COLUMN timestamp_extraction
 │   │   └── routes/
 │   │       ├── settings.js
 │   │       ├── queries.js
@@ -94,9 +95,11 @@ quarterly/                          npm workspace root
 │       │   └── client.js           all fetch helpers (named exports)
 │       ├── utils/
 │       │   ├── addressLabels.js    buildAddressMap / resolveAddress utilities
-│       │   ├── computedColumns.js  applyComputedColumns / computedFieldMeta / parseFormula
+│       │   ├── computedColumns.js  applyComputedColumns / computedFieldMeta / custom arithmetic parser
+│       │   ├── timestampExtraction.js  applyTimestampExtraction / timestampExtractionMeta
 │       │   └── __tests__/
-│       │       └── computedColumns.test.js
+│       │       ├── computedColumns.test.js   (115 tests)
+│       │       └── timestampExtraction.test.js  (25 tests)
 │       └── components/             21 components (see §10)
 │           ├── __tests__/          9 Vitest test files
 │           └── ...
@@ -139,7 +142,7 @@ quarterly/                          npm workspace root
 | graphiql | 3.7.1 | embedded GraphQL explorer |
 | @graphiql/plugin-explorer | 3.2.3 | field explorer plugin |
 | react-datepicker | 7.6.0 | date pickers |
-| expr-eval | 2.0.2 | safe arithmetic expression parser (no eval/Function) |
+| expr-eval | 2.0.2 | safe arithmetic expression parser used internally (no eval/Function) — note: computed columns now use a custom built-in parser instead |
 | Vitest | 3.1.4 | frontend test runner |
 | @testing-library/react | 16.3.0 | component test helpers |
 | @testing-library/jest-dom | 6.6.3 | DOM matchers |
@@ -225,10 +228,11 @@ CREATE TABLE queries (
   field_meta         TEXT    NOT NULL DEFAULT '{}',   -- JSON object
   key_field          TEXT    NOT NULL DEFAULT 'id',
   is_builtin         INTEGER NOT NULL DEFAULT 0,
-  chart_views        TEXT    NOT NULL DEFAULT '[]',   -- JSON array (added migration 003)
-  computed_columns   TEXT    NOT NULL DEFAULT '[]',   -- JSON array (added migration 005)
-  created_at         TEXT    NOT NULL,
-  updated_at         TEXT    NOT NULL
+  chart_views          TEXT    NOT NULL DEFAULT '[]',   -- JSON array (added migration 003)
+  computed_columns     TEXT    NOT NULL DEFAULT '[]',   -- JSON array (added migration 005)
+  timestamp_extraction TEXT,                            -- JSON object or NULL (added migration 006)
+  created_at           TEXT    NOT NULL,
+  updated_at           TEXT    NOT NULL
 );
 ```
 
@@ -237,6 +241,7 @@ CREATE TABLE queries (
 - `field_meta` — object of `{ [columnName]: { label?, decimals?, type?, unit? } }`
 - `chart_views` — array of chart view snapshot objects
 - `computed_columns` — array of `{ name, label, formula }` (added migration 005)
+- `timestamp_extraction` — object `{ sourceField, delimiter, position, outputName, outputLabel }` or null (added migration 006)
 
 **Validation rules (enforced in routes/queries.js):**
 - `name`, `gql`, `result_path` are required
@@ -245,6 +250,7 @@ CREATE TABLE queries (
 - `variable_defs` must be a JSON array
 - `field_meta` must be a JSON object
 - `computed_columns` must be a JSON array (if provided)
+- `timestamp_extraction` must be a JSON object or null (if provided)
 
 ### `runs`
 ```sql
@@ -368,7 +374,18 @@ Used by the migration runner. Tracks the highest applied migration number.
 - Each migration exports `{ up(db) }` — a synchronous function that runs SQL against the db instance
 - Applied migrations are never rolled back
 
-**Adding a migration:** create `backend/src/migrations/006_my_change.js` with `module.exports = { up(db) { db.exec('...') } }`. It runs automatically on next server start.
+**Current migrations:**
+
+| File | Version | Change |
+|---|---|---|
+| `001_initial.js` | 1 | Baseline schema — all core tables + settings defaults |
+| `002_address_labels.js` | 2 | `address_labels` table |
+| `003_chart_views.js` | 3 | `ALTER queries ADD COLUMN chart_views` |
+| `004_endpoints_and_run_notes.js` | 4 | `endpoints` table + `runs.notes` column |
+| `005_computed_columns.js` | 5 | `ALTER queries ADD COLUMN computed_columns` |
+| `006_timestamp_extraction.js` | 6 | `ALTER queries ADD COLUMN timestamp_extraction` |
+
+**Adding a migration:** create `backend/src/migrations/007_my_change.js` with `module.exports = { up(db) { db.exec('...') } }`. It runs automatically on next server start.
 
 ---
 
@@ -471,7 +488,7 @@ Reads `endpoint` from settings. POSTs `{ query: '{ __typename }' }` to it (5s ti
 ---
 
 ### `GET /api/queries`
-Returns all queries. JSON fields (`variable_defs`, `field_meta`, `chart_views`) are parsed before returning. Returns `{ data: [...] }`.
+Returns all queries. JSON fields (`variable_defs`, `field_meta`, `chart_views`, `computed_columns`, `timestamp_extraction`) are parsed before returning. Returns `{ data: [...] }`.
 
 ### `GET /api/queries/:id`
 Single query with parsed JSON fields. Returns `{ data: query }` or `{ error: 'not_found' }` (404).
@@ -693,9 +710,20 @@ Field group mappings for query overwrite:
 - `"variable_defs"` → updates `variable_defs` column
 - `"field_meta"` → updates `field_meta` column
 - `"chart_views"` → updates `chart_views` column
+- `"computed_columns"` → updates `computed_columns` column (display group)
 - `"description"` → updates `description` column
 - `"category"` → updates `category` column
-- `"execution"` → updates `result_path`, `pagination_style`, `cursor_path`, `has_next_path`, `date_format`, `chain_mode`, `chain_var_name`, `chain_field`, `key_field`
+- `"execution"` → updates `result_path`, `pagination_style`, `cursor_path`, `has_next_path`, `date_format`, `chain_mode`, `chain_var_name`, `chain_field`, `key_field`, `timestamp_extraction`
+
+**`QUERY_EXPORT_FIELDS`** includes `computed_columns` and `timestamp_extraction` in addition to all other query fields.
+
+**`QUERY_FIELD_GROUPS`** in the backend:
+- display group: `field_meta`, `chart_views`, `computed_columns`
+- execution group: `result_path`, `pagination_style`, `cursor_path`, `has_next_path`, `date_format`, `chain_mode`, `chain_var_name`, `chain_field`, `key_field`, `timestamp_extraction`
+
+**Frontend `ImportExportModal` FIELD_GROUPS labels:**
+- "Display (field labels, chart views, computed columns)"
+- "Execution (pagination, chain, dates, timestamp extraction)"
 
 `create_new`: inserts with name suffixed `" (imported)"`, increments to `" (imported 2)"` etc. until no conflict.
 
@@ -772,7 +800,7 @@ function formatAge(ranAt, now) {
 
 ### Key callbacks
 
-**`handleSelectQuery(query)`** — sets `selectedQuery`, resets `currentRun`/`runError`/`activeFilters`, initialises `colDivisors` from `field_meta` via `divisorsFromFieldMeta`, switches tab to `'editor'`. Then silently auto-loads the most recent saved run via `listRuns(query.id, 1, 0)` + `getRun(id)` and sets `currentRun` if one exists.
+**`handleSelectQuery(query)`** — sets `selectedQuery`, resets `currentRun`/`runError`/`activeFilters`, initialises `colDivisors` from `field_meta` via `divisorsFromFieldMeta`, then additionally sets `colDivisors[outputName] = 'datetime'` if `timestamp_extraction` is configured (so the extracted field renders as a date in `ResultsTable`). Switches tab to `'editor'`. Then silently auto-loads the most recent saved run via `listRuns(query.id, 1, 0)` + `getRun(id)` and sets `currentRun` if one exists.
 
 **`handleNewQuery()`** — clears `selectedQuery`, `currentRun`, `runError`, `prefillGql`, `colDivisors`.
 
@@ -800,15 +828,34 @@ function formatAge(ranAt, now) {
 
 ### Computed values
 
-**`filteredRows`** (useMemo) — filters `currentRun.rows` by:
-1. `startDate` / `endDate` against `row.timestamp` (unix seconds assumed)
+**Data pipeline** (all useMemo):
+
+```
+currentRun.rows
+  → extractedRows  (applyTimestampExtraction)
+  → filteredRows   (date range filter using extracted timestamp field + chip filters)
+  → computedRows   (applyComputedColumns)
+```
+
+**`extractedRows`** (useMemo) — runs `applyTimestampExtraction(currentRun.rows, selectedQuery.timestamp_extraction)`. When `timestamp_extraction` is null/undefined, returns `currentRun.rows` unchanged. When configured, parses a timestamp out of a source field and adds it as a new output field on every row.
+
+**`filteredRows`** (useMemo) — filters `extractedRows` by:
+1. `startDate` / `endDate` against the extracted timestamp field. The field name used is `selectedQuery?.timestamp_extraction?.outputName || 'timestamp'`. The extracted field is marked `datetime: true` in fieldMeta, so the filter applies date-comparison semantics.
 2. `activeFilters` — AND of all active field chip values
 
 **`computedRows`** (useMemo) — runs `applyComputedColumns(filteredRows, defs, colDivisors)` where `defs` comes from `selectedQuery.computed_columns`. Returns `filteredRows` unchanged when no defs. This is what gets passed to `ResultsView` as `rows`.
 
 **`needsRerun`** (useMemo) — true if user has widened date pickers beyond what `currentRun` fetched. Only widening triggers it (narrowing is handled client-side by `filteredRows`).
 
-**`fieldMeta`** (useMemo) — merges base `selectedQuery.field_meta` with computed column metadata from `computedFieldMeta(selectedQuery.computed_columns)`. Computed columns get entries `{ label, computed: true }`. This ensures computed column labels appear in table headers and chart field selectors.
+**`fieldMeta`** (useMemo) — merges base query fieldMeta with timestamp extraction metadata and computed column metadata:
+```js
+fieldMeta = {
+  ...selectedQuery.field_meta,                        // base
+  ...timestampExtractionMeta(timestamp_extraction),   // extracted field (datetime: true)
+  ...computedFieldMeta(computed_columns),             // computed fields (computed: true)
+}
+```
+This ensures all synthesised columns get proper labels in `ResultsTable` headers and chart field selectors.
 
 ### Modals and overlays
 
@@ -895,11 +942,13 @@ Clone button: always in DOM, `visibility: hidden` when `hoveredId !== q.id`, `vi
 />
 ```
 
-Manages full query form state: `name`, `category`, `description`, `gql`, `variable_defs`, `field_meta`, `computed_columns`, `result_path`, `pagination_style`, `cursor_path`, `has_next_path`, `date_format`, `chain_mode`, `chain_var_name`, `chain_field`, `key_field`.
+Manages full query form state: `name`, `category`, `description`, `gql`, `variable_defs`, `field_meta`, `computed_columns`, `timestamp_extraction`, `result_path`, `pagination_style`, `cursor_path`, `has_next_path`, `date_format`, `chain_mode`, `chain_var_name`, `chain_field`, `key_field`.
 
-Form sections (single scrollable layout, no inner tabs): name/category/key field row, description, result path / pagination / date format / chain mode row, cursor path / has-next path row (cursor only), CodeMirror GQL editor, `<VariablePanel>`, field metadata JSON textarea, `<ComputedColumnsEditor>`.
+Form sections (single scrollable layout, no inner tabs): name/category/key field row, description, result path / pagination / date format / chain mode row, cursor path / has-next path row (cursor only), CodeMirror GQL editor, `<VariablePanel>`, field metadata JSON textarea, `<ComputedColumnsEditor>`, "Parse Timestamp from Field" section.
 
-On save: `field_meta` is parsed from the JSON textarea text; `variable_defs` and `computed_columns` are JSON-stringified before sending to the backend.
+**"Parse Timestamp from Field" section:** a checkbox enables/disables the feature. When enabled, shows 5 config fields: source field name, delimiter string, position (`'before'` | `'after'`), output field name, and output label. These map to `timestamp_extraction.sourceField`, `.delimiter`, `.position`, `.outputName`, `.outputLabel`. When the checkbox is unchecked, `timestamp_extraction` is set to null.
+
+On save: `field_meta` is parsed from the JSON textarea text; `variable_defs`, `computed_columns`, and `timestamp_extraction` are JSON-stringified (or null) before sending to the backend.
 
 Buttons: **▶ Run** (disabled if no `query.id`, no GQL, or no result_path), **Save / Create**, **Delete** (if existing).
 
@@ -987,11 +1036,19 @@ Internal state: `sortCol`, `sortDir`, `copiedAddr`, `searchText`, `hiddenCols`, 
 />
 ```
 
-Manages chart config: `xField`, `leftCols`, `rightCols`, `chartType`, `groupBy`, `leftCumulative`, `rightCumulative`, `leftAggregation`, `rightAggregation`, `showLegend`. Renders ECharts instance via `echarts.init`. Supports PNG download via `chart.getDataURL()`.
+Manages chart config: `xField`, `leftCols`, `rightCols`, `chartType`, `groupBy`, `leftCumulative`, `rightCumulative`, `leftAggregation`, `rightAggregation`, `leftScaleY`, `rightScaleY`, `xSortDir`, `showLegend`. Renders ECharts instance via `echarts.init`. Supports PNG download via `chart.getDataURL()`.
 
-**Per-series aggregation:** When `groupBy !== 'none'` and the x-axis is a timestamp column (`isTimestampX`), each y-axis shows an aggregation selector (`sum` | `avg` | `median` | `min` | `max` | `count`, default `sum`). Left and right axes have independent aggregation state (`leftAggregation`, `rightAggregation`). Both are persisted in saved chart views. The aggregation is applied per bucket after all row values for that bucket are collected.
+**`isTimestampX`:** `xField === 'timestamp' || colDivisors[xField] === 'datetime'`. Controls visibility of the Group By selector, aggregation dropdowns, and x-axis sort control. When `isTimestampX` is false, these controls are hidden.
 
-**`buildChartData` group-by flow:** collects values into arrays per `(bucket, field)`, then applies `aggregate(values, method)` to produce a single point value. An `aggregate()` helper handles the six methods; `null` is returned for empty arrays, `Infinity`/`NaN`, and non-finite results (e.g., division by zero in `avg` of empty set).
+**Per-series aggregation:** When `groupBy !== 'none'` and `isTimestampX`, each y-axis shows an aggregation selector. Options: `sum`, `mean`, `median`, `min`, `max` (default `sum`). Rendered as "Left agg." and "Right agg." dropdowns next to the Group By selector. Left and right axes have independent aggregation state (`leftAggregation`, `rightAggregation`). Both are persisted in saved chart views. Disabled (greyed out) when `groupBy === 'none'`.
+
+**X-axis sort:** `xSortDir` state (`'asc'` | `'desc'`, default `'asc'`). Shown as an "X Order" toggle button next to the aggregation controls. Only visible when `isTimestampX`. Persisted in saved chart views.
+
+**Scale Y:** `leftScaleY` and `rightScaleY` boolean state (default `false`). Rendered as a checkbox in each YAxisSelector label row ("Scale Y"). When true, sets `scale: true` on the ECharts `yAxis` config, which fits the axis to the data range instead of starting at zero. Persisted in saved chart views.
+
+**`buildChartData` refactor:** Uses a unified Map-group-then-aggregate pattern for all `groupBy` modes (including `'none'`). Collects values into arrays per `(bucket, field)`, then applies `aggregate(values, method)` to produce a single point value. The same `aggregate()` helper is used for all aggregation modes; `null` is returned for empty arrays, `Infinity`/`NaN`, and non-finite results (e.g., division by zero).
+
+**Saved chart view fields:** `xField`, `leftCols`, `rightCols`, `chartType`, `groupBy`, `leftCumulative`, `rightCumulative`, `leftAggregation`, `rightAggregation`, `leftScaleY`, `rightScaleY`, `xSortDir`, `showLegend`.
 
 ---
 
@@ -1332,33 +1389,53 @@ If `currentRun.ran_at` is ≥ 72 hours before `now`, a full-width amber `.warnin
 
 ### Per-series aggregation (ResultsChart)
 
-When `groupBy !== 'none'` and the x-axis is a timestamp column, each bucket of rows is aggregated into a single point. The supported methods are `sum`, `avg`, `median`, `min`, `max`, `count`.
+When `groupBy !== 'none'` and `isTimestampX`, each bucket of rows is aggregated into a single point. The supported methods are `sum`, `mean`, `median`, `min`, `max`.
 
-**`buildChartData` group-by pattern:** for each row, its bucket timestamp and per-field numeric values are pushed into arrays in a `Map`. After all rows are processed, each bucket is mapped to a point by applying `aggregate(values, method)`.
+**`buildChartData` group-by pattern:** uses a unified Map-group-then-aggregate approach for all `groupBy` modes. For each row, its bucket key and per-field numeric values are pushed into arrays in a `Map`. After all rows are processed, each bucket is mapped to a point by applying `aggregate(values, method)`.
 
-**`aggregate(values, method)`** filters out nulls/NaN, then: `sum` → reduce add; `avg` → reduce add ÷ length; `median` → sort + mid index; `min`/`max` → Math.min/max spread; `count` → length. Returns `null` for empty arrays.
+**`aggregate(values, method)`** filters out nulls/NaN, then: `sum` → reduce add; `mean` → reduce add ÷ length; `median` → sort + mid index; `min`/`max` → Math.min/max spread. Returns `null` for empty arrays or non-finite results.
 
 `leftAggregation` and `rightAggregation` are independent state variables (default `'sum'`). They are persisted into and restored from saved chart views alongside the other chart config fields. The aggregation selectors are rendered inside `YAxisSelector` and are only visible when `showAggregation={isTimestampX && groupBy !== 'none'}`.
 
+### Timestamp extraction (ResultsChart / App.jsx pipeline)
+
+The `isTimestampX` flag — `xField === 'timestamp' || colDivisors[xField] === 'datetime'` — generalises chart x-axis detection to cover both the conventional `timestamp` field and any field marked `'datetime'` in `colDivisors`. This means a query using `timestamp_extraction` with a custom `outputName` (e.g. `event_time`) will still activate Group By / aggregation controls in `ResultsChart` once that field's divisor is set to `'datetime'`.
+
+The `colDivisors` auto-init on `handleSelectQuery` ensures this: when `timestamp_extraction` is configured, `colDivisors[outputName]` is set to `'datetime'` immediately so the chart recognises it without manual user action.
+
 ### Computed columns
 
-Computed columns are user-defined arithmetic formulas that produce additional columns from existing row data. They are defined per query (stored in `computed_columns` JSON array in the DB) and evaluated at display time.
+Computed columns are user-defined arithmetic formulas that produce additional columns from existing row data. They are defined per query (stored in `computed_columns` JSON array in the DB) and evaluated client-side at display time.
 
 **Storage shape:** `[{ name, label, formula }]`. `name` must match `/^[A-Za-z_][A-Za-z0-9_]*$/` (validated frontend only). `formula` is a plain arithmetic expression string, e.g. `"volume / price"`.
 
 **`applyComputedColumns(rows, defs, colDivisors)`** (in `frontend/src/utils/computedColumns.js`):
 1. Returns rows unchanged if `defs` is empty/null.
 2. For each row, builds an initial scope from all row fields, applying `applyDivisor` to get display values (same logic as `ResultsChart` — BigInt-safe divisor scaling).
-3. Iterates defs in order. For each def, attempts `parsedExpr.evaluate(scope)`. On success, adds the result (if finite and non-NaN) or `null` to the scope and to the output row. This enables chaining: later columns can reference the result of earlier ones.
+3. Iterates defs in order. For each def, evaluates the formula using the custom arithmetic parser with the current scope. On success, adds the result (if finite and non-NaN) or `null` to the scope and to the output row. This enables chaining: later columns can reference the result of earlier ones.
 4. Returns new row objects (original rows not mutated).
 
-**`parseFormula(formula)`** wraps `Parser.parse(formula)` in a try/catch. Returns the parsed expression object or `null` on syntax error or empty string.
+**`parseFormula(formula)`** — parses the formula using the custom arithmetic parser. Returns the parsed expression object or `null` on syntax error or empty string.
+
+**Custom arithmetic parser** (built into `computedColumns.js`, no `eval` or `Function`): supports `+`, `-`, `*`, `/`, `^` (exponentiation), unary minus, parentheses, named variables (row field names), and numeric literals. Blocks access to prototype properties (guards against `__proto__` injection). Division by zero produces `Infinity`, caught by `!isFinite(result)` → `null`.
 
 **`computedFieldMeta(defs)`** returns `{ [name]: { label: label || name, computed: true } }` for each def. This is merged into `fieldMeta` in App so computed columns get labels in `ResultsTable` headers and chart field selectors.
 
-**expr-eval configuration:** `Parser` is created with `operators: { logical: false, comparison: false, bitwise: false, in: false, assignment: false }` to restrict evaluation to pure arithmetic. Division by zero produces `Infinity`, which is caught by `!isFinite(result)` → `null`.
+**Pipeline position:** `computedRows = applyComputedColumns(filteredRows, defs, colDivisors)` — applied after timestamp extraction and date+chip filtering, before passing rows to `ResultsView`. This means filters operate on raw (and extracted) columns only; computed columns are not filterable.
 
-**Pipeline position:** `computedRows = applyComputedColumns(filteredRows, defs, colDivisors)` — applied after date+chip filtering, before passing rows to `ResultsView`. This means filters operate on raw columns only; computed columns are not filterable.
+### Timestamp extraction
+
+`applyTimestampExtraction(rows, config)` (in `frontend/src/utils/timestampExtraction.js`) runs first in the data pipeline — before date filtering — so the extracted field can be used as the timestamp for date range filtering.
+
+**Config shape:** `{ sourceField, delimiter, position ('before'|'after'), outputName, outputLabel }`. When `config` is null/undefined, rows are returned unchanged.
+
+**Extraction logic:** for each row, takes `row[sourceField]`, splits on `delimiter`, and takes the token at `position` (`'before'` → index 0, `'after'` → last index). The result is added as `row[outputName]`. If the source field is missing or splitting fails, `outputName` is set to `null` on that row.
+
+**`timestampExtractionMeta(config)`** returns `{ [outputName]: { label: outputLabel || outputName, datetime: true } }` or `{}` when config is null. The `datetime: true` flag causes `ResultsTable` and chart logic to treat it as a datetime column.
+
+**Warning banner suppression:** the "no timestamp field" warning banner in App is suppressed when `timestamp_extraction` is configured, since the extracted field serves as the timestamp.
+
+**Pipeline position:** `extractedRows = applyTimestampExtraction(currentRun.rows, config)` runs before `filteredRows`. The date range filter reads `selectedQuery?.timestamp_extraction?.outputName || 'timestamp'` as the field name to filter on.
 
 ---
 
@@ -1379,7 +1456,7 @@ Config: `jest` in `backend/package.json`, `--runInBand` (sequential — avoids S
 
 **`runs.test.js` adds `notes TEXT` to its `makeDb()` schema** because migration 004 adds it via `ALTER TABLE`, which the in-memory test db doesn't run.
 
-**`queries.test.js` adds `computed_columns TEXT NOT NULL DEFAULT '[]'` to its `makeDb()` schema** for the same reason (migration 005).
+**`queries.test.js` adds `computed_columns TEXT NOT NULL DEFAULT '[]'` and `timestamp_extraction TEXT` to its `makeDb()` schema** for the same reason (migrations 005 and 006).
 
 ### Frontend (Vitest)
 
@@ -1387,13 +1464,14 @@ Run: `npm test --workspace=frontend`
 
 Config: `vitest.config.js` with `environment: 'jsdom'`, `setupFiles: ['@testing-library/jest-dom/vitest']`.
 
-**9 test files, 67 tests total:**
+**11 test files, 207+ tests total:**
 
 | File | Tests | Coverage |
 |---|---|---|
 | `components/__tests__/ResultsTable.test.jsx` | ~25 | Column rendering, sorting, divisors, address resolution, copy formats, virtualisation toggle |
 | `components/__tests__/ComputedColumnsEditor.test.jsx` | 12 | Empty state, existing defs, edit flow, delete, add (success/validation errors/cancel), reorder |
-| `utils/__tests__/computedColumns.test.js` | 14 | `parseFormula` (valid/invalid/empty), `applyComputedColumns` (no defs, arithmetic, divisors, zero, chaining, invalid formula, div-by-zero), `computedFieldMeta` |
+| `utils/__tests__/computedColumns.test.js` | 115 | `parseFormula` (valid/invalid/empty), `applyComputedColumns` (no defs, arithmetic, divisors, zero, chaining, invalid formula, div-by-zero, prototype blocking), `computedFieldMeta`, custom parser operators |
+| `utils/__tests__/timestampExtraction.test.js` | 25 | `applyTimestampExtraction` (null config, before/after position, missing field, delimiter variants), `timestampExtractionMeta` |
 | `components/__tests__/EndpointBar.test.jsx` | ~5 | URL save, ping, explore button visibility |
 | `components/__tests__/QuerySidebar.test.jsx` | ~5 | Query listing, search filter, builtin import |
 | `components/__tests__/HistoryDrawer.test.jsx` | ~4 | Run list, note editing, pin/compare flow |
@@ -1414,7 +1492,7 @@ vi.mock('../../utils/addressLabels.js', () => ({
 }))
 ```
 
-**Key `computedColumns.test.js` note:** `parseFormula('a ++ b')` returns non-null because expr-eval parses it as `a + (+b)` (unary plus is valid). Tests use `'(a + b'` (unclosed paren) as the canonical invalid-syntax case.
+**Key `computedColumns.test.js` note:** The custom parser supports unary minus and the `^` exponentiation operator. Tests use `'(a + b'` (unclosed paren) as the canonical invalid-syntax case. Prototype property access (e.g., `__proto__`) is blocked and results in `null`. The test suite has 115 tests covering all parser operators, edge cases, chaining, and security guards.
 
 ---
 
