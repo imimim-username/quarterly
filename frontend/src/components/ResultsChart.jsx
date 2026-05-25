@@ -37,6 +37,7 @@ function fmtAxisVal(val) {
 const CHART_TYPES = ['bar', 'line', 'area']
 const GROUP_BY_OPTIONS = ['none', 'day', 'week', 'month']
 const Y_MODE_OPTIONS = ['raw', 'cumulative']
+const AGGREGATION_OPTIONS = ['sum', 'avg', 'median', 'min', 'max', 'count']
 const COLORS = ['#e94560', '#2196f3', '#4caf50', '#ff9800', '#9c27b0', '#00bcd4', '#ff5722', '#607d8b']
 const DIVISOR_CYCLE = ['raw', '1e6', '1e18']
 const DIVISOR_LABELS = { raw: 'raw', '1e6': '÷1e6', '1e18': '÷1e18' }
@@ -62,7 +63,26 @@ function bucketTimestamp(ts, groupBy) {
   return Number(ts)
 }
 
-function buildChartData(rows, xField, allYFields, colDivisors, groupBy, yMode) {
+/** Collapse an array of numbers into a single value using the chosen method. */
+function aggregate(values, method) {
+  const nums = values.filter(v => v !== null && !isNaN(v))
+  if (nums.length === 0) return null
+  switch (method) {
+    case 'avg':    return nums.reduce((a, b) => a + b, 0) / nums.length
+    case 'median': {
+      const sorted = [...nums].sort((a, b) => a - b)
+      const mid = Math.floor(sorted.length / 2)
+      return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+    }
+    case 'min':   return Math.min(...nums)
+    case 'max':   return Math.max(...nums)
+    case 'count': return nums.length
+    case 'sum':
+    default:      return nums.reduce((a, b) => a + b, 0)
+  }
+}
+
+function buildChartData(rows, xField, allYFields, colDivisors, groupBy, yMode, aggregation = 'sum') {
   if (!rows || !xField || allYFields.length === 0) return []
 
   let data
@@ -77,17 +97,21 @@ function buildChartData(rows, xField, allYFields, colDivisors, groupBy, yMode) {
     for (const row of rows) {
       const bucket = bucketTimestamp(row[xField], groupBy)
       if (!map.has(bucket)) {
-        map.set(bucket, Object.fromEntries(allYFields.map(f => [f, 0])))
+        map.set(bucket, Object.fromEntries(allYFields.map(f => [f, []])))
       }
       const entry = map.get(bucket)
       for (const f of allYFields) {
         const v = applyDivisorNumeric(row[f], colDivisors[f])
-        if (v !== null && !isNaN(v)) entry[f] += v
+        if (v !== null && !isNaN(v)) entry[f].push(v)
       }
     }
     data = [...map.entries()]
       .sort((a, b) => a[0] - b[0])
-      .map(([bucket, vals]) => ({ x: bucket, ...vals }))
+      .map(([bucket, arrays]) => {
+        const point = { x: bucket }
+        for (const f of allYFields) point[f] = aggregate(arrays[f], aggregation)
+        return point
+      })
   }
 
   if (yMode === 'cumulative') {
@@ -128,7 +152,7 @@ function makeSeries(fields, colorOffset, yAxisIndex, seriesType, chartData, fiel
   })
 }
 
-function YAxisSelector({ label, fields, setFields, allFields, colorOffset, fieldMeta, seriesType, setSeriesType, yMode, setYMode, showYMode, colDivisors, onDivisorChange }) {
+function YAxisSelector({ label, fields, setFields, allFields, colorOffset, fieldMeta, seriesType, setSeriesType, yMode, setYMode, showYMode, aggregation, setAggregation, showAggregation, colDivisors, onDivisorChange }) {
   const available = allFields.filter(c => !fields.includes(c))
 
   const add = (col) => { if (col) setFields(prev => [...prev, col]) }
@@ -159,6 +183,16 @@ function YAxisSelector({ label, fields, setFields, allFields, colorOffset, field
             style={{ fontSize: 11, padding: '1px 4px' }}
           >
             {Y_MODE_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+        )}
+        {showAggregation && (
+          <select
+            value={aggregation}
+            onChange={e => setAggregation(e.target.value)}
+            style={{ fontSize: 11, padding: '1px 4px' }}
+            title="Aggregation method for grouped values"
+          >
+            {AGGREGATION_OPTIONS.map(a => <option key={a} value={a}>{a}</option>)}
           </select>
         )}
       </label>
@@ -216,6 +250,8 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
   const [groupBy, setGroupBy] = useState('none')
   const [leftYMode, setLeftYMode] = useState('raw')
   const [rightYMode, setRightYMode] = useState('raw')
+  const [leftAggregation, setLeftAggregation] = useState('sum')
+  const [rightAggregation, setRightAggregation] = useState('sum')
   const [showLegend, setShowLegend] = useState(true)
   const [savingView, setSavingView] = useState(false)
   const [savedMsg, setSavedMsg] = useState('')
@@ -231,6 +267,8 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
     setGroupBy(view.groupBy || 'none')
     setLeftYMode(view.leftYMode || 'raw')
     setRightYMode(view.rightYMode || 'raw')
+    setLeftAggregation(view.leftAggregation || 'sum')
+    setRightAggregation(view.rightAggregation || 'sum')
     setShowLegend(view.showLegend !== false)
     if (view.colDivisors) onDivisorChange?.(view.colDivisors)
   }
@@ -251,6 +289,8 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
         groupBy,
         leftYMode,
         rightYMode,
+        leftAggregation,
+        rightAggregation,
         showLegend,
         colDivisors,
       }
@@ -272,13 +312,13 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
   const hasChart = xField && (leftFields.length > 0 || rightFields.length > 0)
 
   const leftChartData = useMemo(
-    () => buildChartData(rows, xField, leftFields, colDivisors, groupBy, leftYMode),
-    [rows, xField, JSON.stringify(leftFields), colDivisors, groupBy, leftYMode]
+    () => buildChartData(rows, xField, leftFields, colDivisors, groupBy, leftYMode, leftAggregation),
+    [rows, xField, JSON.stringify(leftFields), colDivisors, groupBy, leftYMode, leftAggregation]
   )
 
   const rightChartData = useMemo(
-    () => buildChartData(rows, xField, rightFields, colDivisors, groupBy, rightYMode),
-    [rows, xField, JSON.stringify(rightFields), colDivisors, groupBy, rightYMode]
+    () => buildChartData(rows, xField, rightFields, colDivisors, groupBy, rightYMode, rightAggregation),
+    [rows, xField, JSON.stringify(rightFields), colDivisors, groupBy, rightYMode, rightAggregation]
   )
 
   // Use whichever dataset is available for x-axis labels
@@ -410,6 +450,9 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
           yMode={leftYMode}
           setYMode={setLeftYMode}
           showYMode={isTimestampX}
+          aggregation={leftAggregation}
+          setAggregation={setLeftAggregation}
+          showAggregation={isTimestampX && groupBy !== 'none'}
           colDivisors={colDivisors}
           onDivisorChange={onDivisorChange}
         />
@@ -429,6 +472,9 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
           yMode={rightYMode}
           setYMode={setRightYMode}
           showYMode={isTimestampX}
+          aggregation={rightAggregation}
+          setAggregation={setRightAggregation}
+          showAggregation={isTimestampX && groupBy !== 'none'}
           colDivisors={colDivisors}
           onDivisorChange={onDivisorChange}
         />

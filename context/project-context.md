@@ -60,7 +60,8 @@ quarterly/                          npm workspace root
 │   │   │   ├── 001_initial.js      baseline schema (all core tables + settings defaults)
 │   │   │   ├── 002_address_labels.js  address_labels table
 │   │   │   ├── 003_chart_views.js  ALTER queries ADD COLUMN chart_views
-│   │   │   └── 004_endpoints_and_run_notes.js  endpoints table + runs.notes column
+│   │   │   ├── 004_endpoints_and_run_notes.js  endpoints table + runs.notes column
+│   │   │   └── 005_computed_columns.js  ALTER queries ADD COLUMN computed_columns
 │   │   └── routes/
 │   │       ├── settings.js
 │   │       ├── queries.js
@@ -92,9 +93,12 @@ quarterly/                          npm workspace root
 │       ├── api/
 │       │   └── client.js           all fetch helpers (named exports)
 │       ├── utils/
-│       │   └── addressLabels.js    buildAddressMap / resolveAddress utilities
-│       └── components/             20 components (see §10)
-│           ├── __tests__/          7 Vitest test files
+│       │   ├── addressLabels.js    buildAddressMap / resolveAddress utilities
+│       │   ├── computedColumns.js  applyComputedColumns / computedFieldMeta / parseFormula
+│       │   └── __tests__/
+│       │       └── computedColumns.test.js
+│       └── components/             21 components (see §10)
+│           ├── __tests__/          9 Vitest test files
 │           └── ...
 └── queries/
     └── builtin/
@@ -135,6 +139,7 @@ quarterly/                          npm workspace root
 | graphiql | 3.7.1 | embedded GraphQL explorer |
 | @graphiql/plugin-explorer | 3.2.3 | field explorer plugin |
 | react-datepicker | 7.6.0 | date pickers |
+| expr-eval | 2.0.2 | safe arithmetic expression parser (no eval/Function) |
 | Vitest | 3.1.4 | frontend test runner |
 | @testing-library/react | 16.3.0 | component test helpers |
 | @testing-library/jest-dom | 6.6.3 | DOM matchers |
@@ -217,12 +222,13 @@ CREATE TABLE queries (
   chain_mode       TEXT    NOT NULL DEFAULT 'filter',
   chain_var_name   TEXT    NOT NULL DEFAULT 'chain',
   chain_field      TEXT    NOT NULL DEFAULT 'chain',
-  field_meta       TEXT    NOT NULL DEFAULT '{}',   -- JSON object
-  key_field        TEXT    NOT NULL DEFAULT 'id',
-  is_builtin       INTEGER NOT NULL DEFAULT 0,
-  chart_views      TEXT    NOT NULL DEFAULT '[]',   -- JSON array (added migration 003)
-  created_at       TEXT    NOT NULL,
-  updated_at       TEXT    NOT NULL
+  field_meta         TEXT    NOT NULL DEFAULT '{}',   -- JSON object
+  key_field          TEXT    NOT NULL DEFAULT 'id',
+  is_builtin         INTEGER NOT NULL DEFAULT 0,
+  chart_views        TEXT    NOT NULL DEFAULT '[]',   -- JSON array (added migration 003)
+  computed_columns   TEXT    NOT NULL DEFAULT '[]',   -- JSON array (added migration 005)
+  created_at         TEXT    NOT NULL,
+  updated_at         TEXT    NOT NULL
 );
 ```
 
@@ -230,6 +236,7 @@ CREATE TABLE queries (
 - `variable_defs` — array of `{ name, source, default?, type? }`
 - `field_meta` — object of `{ [columnName]: { label?, decimals?, type?, unit? } }`
 - `chart_views` — array of chart view snapshot objects
+- `computed_columns` — array of `{ name, label, formula }` (added migration 005)
 
 **Validation rules (enforced in routes/queries.js):**
 - `name`, `gql`, `result_path` are required
@@ -237,6 +244,7 @@ CREATE TABLE queries (
 - If `cursor`: `cursor_path` and `has_next_path` must be non-empty
 - `variable_defs` must be a JSON array
 - `field_meta` must be a JSON object
+- `computed_columns` must be a JSON array (if provided)
 
 ### `runs`
 ```sql
@@ -360,7 +368,7 @@ Used by the migration runner. Tracks the highest applied migration number.
 - Each migration exports `{ up(db) }` — a synchronous function that runs SQL against the db instance
 - Applied migrations are never rolled back
 
-**Adding a migration:** create `backend/src/migrations/005_my_change.js` with `module.exports = { up(db) { db.exec('...') } }`. It runs automatically on next server start.
+**Adding a migration:** create `backend/src/migrations/006_my_change.js` with `module.exports = { up(db) { db.exec('...') } }`. It runs automatically on next server start.
 
 ---
 
@@ -721,13 +729,18 @@ Applies `validateEndpoint` middleware. Proxies the raw GraphQL POST body to the 
 
 `App` is the single root component. All state lives here. Inner components receive only what they need via props.
 
-### Module-level helper
+### Module-level helpers
 
 ```js
 function divisorsFromFieldMeta(fm) {
   // converts field_meta.decimals to colDivisors format
   // { assets: { decimals: 18 } } → { assets: '1e18' }
   // { usdc:   { decimals:  6 } } → { usdc:  '1e6'  }
+}
+
+function formatAge(ranAt, now) {
+  // Returns human-readable age string: "just now", "5m ago", "2h ago", "3d ago"
+  // Used for the staleness label on cached run results.
 }
 ```
 
@@ -755,10 +768,11 @@ function divisorsFromFieldMeta(fm) {
 | `endpointVersion` | `number` | Incremented to force EndpointBar remount (re-reads endpoint from server) |
 | `addressLabels` | `array` | All address labels, loaded on mount, passed to ResultsTable/ResultFilters |
 | `prefillGql` | `string \| null` | GQL pre-populated from Schema Explorer "Use This Query" |
+| `now` | `number` | `Date.now()` updated every 60 s via `setInterval`; used by staleness label |
 
 ### Key callbacks
 
-**`handleSelectQuery(query)`** — sets `selectedQuery`, resets `currentRun`/`runError`/`activeFilters`, initialises `colDivisors` from `field_meta` via `divisorsFromFieldMeta`, switches tab to `'editor'`.
+**`handleSelectQuery(query)`** — sets `selectedQuery`, resets `currentRun`/`runError`/`activeFilters`, initialises `colDivisors` from `field_meta` via `divisorsFromFieldMeta`, switches tab to `'editor'`. Then silently auto-loads the most recent saved run via `listRuns(query.id, 1, 0)` + `getRun(id)` and sets `currentRun` if one exists.
 
 **`handleNewQuery()`** — clears `selectedQuery`, `currentRun`, `runError`, `prefillGql`, `colDivisors`.
 
@@ -790,9 +804,11 @@ function divisorsFromFieldMeta(fm) {
 1. `startDate` / `endDate` against `row.timestamp` (unix seconds assumed)
 2. `activeFilters` — AND of all active field chip values
 
+**`computedRows`** (useMemo) — runs `applyComputedColumns(filteredRows, defs, colDivisors)` where `defs` comes from `selectedQuery.computed_columns`. Returns `filteredRows` unchanged when no defs. This is what gets passed to `ResultsView` as `rows`.
+
 **`needsRerun`** (useMemo) — true if user has widened date pickers beyond what `currentRun` fetched. Only widening triggers it (narrowing is handled client-side by `filteredRows`).
 
-**`fieldMeta`** — `selectedQuery?.field_meta ?? {}` (already a parsed object)
+**`fieldMeta`** (useMemo) — merges base `selectedQuery.field_meta` with computed column metadata from `computedFieldMeta(selectedQuery.computed_columns)`. Computed columns get entries `{ label, computed: true }`. This ensures computed column labels appear in table headers and chart field selectors.
 
 ### Modals and overlays
 
@@ -879,11 +895,13 @@ Clone button: always in DOM, `visibility: hidden` when `hoveredId !== q.id`, `vi
 />
 ```
 
-Manages full query form state: name, category, description, gql, variable_defs, field_meta, result_path, pagination_style, cursor_path, has_next_path, date_format, chain_mode, chain_var_name, chain_field, key_field.
+Manages full query form state: `name`, `category`, `description`, `gql`, `variable_defs`, `field_meta`, `computed_columns`, `result_path`, `pagination_style`, `cursor_path`, `has_next_path`, `date_format`, `chain_mode`, `chain_var_name`, `chain_field`, `key_field`.
 
-Four inner tabs: **Query** (GQL editor), **Variables** (VariablePanel), **Execution** (pagination settings), **Field Meta**.
+Form sections (single scrollable layout, no inner tabs): name/category/key field row, description, result path / pagination / date format / chain mode row, cursor path / has-next path row (cursor only), CodeMirror GQL editor, `<VariablePanel>`, field metadata JSON textarea, `<ComputedColumnsEditor>`.
 
-Buttons: **Save**, **Delete** (if existing), **Run**, **Introspect** (opens schema explorer via prop... actually calls `onRun` after saving), **Preview**.
+On save: `field_meta` is parsed from the JSON textarea text; `variable_defs` and `computed_columns` are JSON-stringified before sending to the backend.
+
+Buttons: **▶ Run** (disabled if no `query.id`, no GQL, or no result_path), **Save / Create**, **Delete** (if existing).
 
 ---
 
@@ -897,6 +915,30 @@ Buttons: **Save**, **Delete** (if existing), **Run**, **Introspect** (opens sche
 ```
 
 Renders an editable table of variable definitions. Sources: `global_start`, `global_end`, `user`, `none`, pagination sources.
+
+---
+
+### `ComputedColumnsEditor`
+
+```jsx
+<ComputedColumnsEditor
+  defs={array}               // array of { name, label, formula }
+  onChange={fn}              // called with new defs array
+/>
+```
+
+Inline CRUD UI for computed column definitions. Shows existing columns in a list with Edit (✎), Delete (✕), Move Up (▲), and Move Down (▼) buttons. "Add Column" opens an inline form.
+
+**Inline form fields:**
+- `name` — identifier (required, `^[A-Za-z_][A-Za-z0-9_]*$`, unique, readonly when editing)
+- `label` — display name (optional; falls back to `name` if empty)
+- `formula` — arithmetic expression validated via `parseFormula` with live ✓ / ✗ indicator
+
+**Validation on submit:** invalid formula → "Formula is invalid"; invalid name pattern → error showing regex requirement; duplicate name → "already exists" error.
+
+**Available variables hint:** shows clickable chips for all known column names (from `defs`) plus previously-defined computed column names. Clicking a chip inserts it at cursor position in the formula textarea (future-placeholder for now, shown as clickable items that could be inserted).
+
+**`onChange` is called with the full updated array** on every successful add, edit, delete, or reorder.
 
 ---
 
@@ -945,7 +987,11 @@ Internal state: `sortCol`, `sortDir`, `copiedAddr`, `searchText`, `hiddenCols`, 
 />
 ```
 
-Manages chart config: `xField`, `leftCols`, `rightCols`, `chartType`, `groupBy`, `leftCumulative`, `rightCumulative`, `showLegend`. Renders ECharts instance via `echarts.init`. Supports PNG download via `chart.getDataURL()`.
+Manages chart config: `xField`, `leftCols`, `rightCols`, `chartType`, `groupBy`, `leftCumulative`, `rightCumulative`, `leftAggregation`, `rightAggregation`, `showLegend`. Renders ECharts instance via `echarts.init`. Supports PNG download via `chart.getDataURL()`.
+
+**Per-series aggregation:** When `groupBy !== 'none'` and the x-axis is a timestamp column (`isTimestampX`), each y-axis shows an aggregation selector (`sum` | `avg` | `median` | `min` | `max` | `count`, default `sum`). Left and right axes have independent aggregation state (`leftAggregation`, `rightAggregation`). Both are persisted in saved chart views. The aggregation is applied per bucket after all row values for that bucket are collected.
+
+**`buildChartData` group-by flow:** collects values into arrays per `(bucket, field)`, then applies `aggregate(values, method)` to produce a single point value. An `aggregate()` helper handles the six methods; `null` is returned for empty arrays, `Infinity`/`NaN`, and non-finite results (e.g., division by zero in `avg` of empty set).
 
 ---
 
@@ -1274,6 +1320,46 @@ This is attempted first; if string manipulation fails (unusual query structure),
 
 `variables_base` stores only user-visible variables (date vars + user-input vars). Pagination variables (`pagination_first`, `pagination_skip`, `pagination_after`) are excluded. This is what the Query Preview modal shows.
 
+### Staleness indicator
+
+When a query is selected in the sidebar (`handleSelectQuery`), App immediately calls `listRuns(query.id, 1, 0)` and then `getRun(id)` to silently pre-populate `currentRun` with the most recent saved run. This means the Results tab shows cached data instantly without requiring a manual re-run.
+
+The `now` state is initialised to `Date.now()` and updated every 60 seconds via `setInterval`. This drives the staleness label ("Results from 2h ago") in the run stats bar so it stays current without a page reload.
+
+If `currentRun.ran_at` is ≥ 72 hours before `now`, a full-width amber `.warning-banner` is shown above the results with a prompt to re-run. The 72-hour threshold is hard-coded.
+
+`formatAge(ranAt, now)` formats: < 60 s → "just now", < 60 m → "Xm ago", < 24 h → "Xh ago", otherwise "Xd ago".
+
+### Per-series aggregation (ResultsChart)
+
+When `groupBy !== 'none'` and the x-axis is a timestamp column, each bucket of rows is aggregated into a single point. The supported methods are `sum`, `avg`, `median`, `min`, `max`, `count`.
+
+**`buildChartData` group-by pattern:** for each row, its bucket timestamp and per-field numeric values are pushed into arrays in a `Map`. After all rows are processed, each bucket is mapped to a point by applying `aggregate(values, method)`.
+
+**`aggregate(values, method)`** filters out nulls/NaN, then: `sum` → reduce add; `avg` → reduce add ÷ length; `median` → sort + mid index; `min`/`max` → Math.min/max spread; `count` → length. Returns `null` for empty arrays.
+
+`leftAggregation` and `rightAggregation` are independent state variables (default `'sum'`). They are persisted into and restored from saved chart views alongside the other chart config fields. The aggregation selectors are rendered inside `YAxisSelector` and are only visible when `showAggregation={isTimestampX && groupBy !== 'none'}`.
+
+### Computed columns
+
+Computed columns are user-defined arithmetic formulas that produce additional columns from existing row data. They are defined per query (stored in `computed_columns` JSON array in the DB) and evaluated at display time.
+
+**Storage shape:** `[{ name, label, formula }]`. `name` must match `/^[A-Za-z_][A-Za-z0-9_]*$/` (validated frontend only). `formula` is a plain arithmetic expression string, e.g. `"volume / price"`.
+
+**`applyComputedColumns(rows, defs, colDivisors)`** (in `frontend/src/utils/computedColumns.js`):
+1. Returns rows unchanged if `defs` is empty/null.
+2. For each row, builds an initial scope from all row fields, applying `applyDivisor` to get display values (same logic as `ResultsChart` — BigInt-safe divisor scaling).
+3. Iterates defs in order. For each def, attempts `parsedExpr.evaluate(scope)`. On success, adds the result (if finite and non-NaN) or `null` to the scope and to the output row. This enables chaining: later columns can reference the result of earlier ones.
+4. Returns new row objects (original rows not mutated).
+
+**`parseFormula(formula)`** wraps `Parser.parse(formula)` in a try/catch. Returns the parsed expression object or `null` on syntax error or empty string.
+
+**`computedFieldMeta(defs)`** returns `{ [name]: { label: label || name, computed: true } }` for each def. This is merged into `fieldMeta` in App so computed columns get labels in `ResultsTable` headers and chart field selectors.
+
+**expr-eval configuration:** `Parser` is created with `operators: { logical: false, comparison: false, bitwise: false, in: false, assignment: false }` to restrict evaluation to pure arithmetic. Division by zero produces `Infinity`, which is caught by `!isFinite(result)` → `null`.
+
+**Pipeline position:** `computedRows = applyComputedColumns(filteredRows, defs, colDivisors)` — applied after date+chip filtering, before passing rows to `ResultsView`. This means filters operate on raw columns only; computed columns are not filterable.
+
 ---
 
 ## 13. Testing
@@ -1293,11 +1379,27 @@ Config: `jest` in `backend/package.json`, `--runInBand` (sequential — avoids S
 
 **`runs.test.js` adds `notes TEXT` to its `makeDb()` schema** because migration 004 adds it via `ALTER TABLE`, which the in-memory test db doesn't run.
 
+**`queries.test.js` adds `computed_columns TEXT NOT NULL DEFAULT '[]'` to its `makeDb()` schema** for the same reason (migration 005).
+
 ### Frontend (Vitest)
 
 Run: `npm test --workspace=frontend`
 
 Config: `vitest.config.js` with `environment: 'jsdom'`, `setupFiles: ['@testing-library/jest-dom/vitest']`.
+
+**9 test files, 67 tests total:**
+
+| File | Tests | Coverage |
+|---|---|---|
+| `components/__tests__/ResultsTable.test.jsx` | ~25 | Column rendering, sorting, divisors, address resolution, copy formats, virtualisation toggle |
+| `components/__tests__/ComputedColumnsEditor.test.jsx` | 12 | Empty state, existing defs, edit flow, delete, add (success/validation errors/cancel), reorder |
+| `utils/__tests__/computedColumns.test.js` | 14 | `parseFormula` (valid/invalid/empty), `applyComputedColumns` (no defs, arithmetic, divisors, zero, chaining, invalid formula, div-by-zero), `computedFieldMeta` |
+| `components/__tests__/EndpointBar.test.jsx` | ~5 | URL save, ping, explore button visibility |
+| `components/__tests__/QuerySidebar.test.jsx` | ~5 | Query listing, search filter, builtin import |
+| `components/__tests__/HistoryDrawer.test.jsx` | ~4 | Run list, note editing, pin/compare flow |
+| `components/__tests__/QueryPreviewModal.test.jsx` | ~4 | Code snippet tabs, copy button |
+| `components/__tests__/SchemaExplorer.test.jsx` | ~4 | GraphiQL embed, "Use This Query" button |
+| `components/__tests__/EndpointProfilesModal.test.jsx` | ~4 | Profile list, create, select, delete |
 
 **Mocking pattern:**
 - `vi.mock('../../api/client.js', () => ({ fn: vi.fn() }))` — mock BEFORE import
@@ -1311,6 +1413,8 @@ vi.mock('../../utils/addressLabels.js', () => ({
   resolveAddress: (_value, _chain, _map) => null,
 }))
 ```
+
+**Key `computedColumns.test.js` note:** `parseFormula('a ++ b')` returns non-null because expr-eval parses it as `a + (+b)` (unary plus is valid). Tests use `'(a + b'` (unclosed paren) as the canonical invalid-syntax case.
 
 ---
 

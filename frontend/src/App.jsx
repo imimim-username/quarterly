@@ -15,7 +15,8 @@ import ImportExportModal from './components/ImportExportModal.jsx'
 import QueryPreviewModal from './components/QueryPreviewModal.jsx'
 import EndpointProfilesModal from './components/EndpointProfilesModal.jsx'
 import ReportsPanel from './components/ReportsPanel.jsx'
-import { createRun, listAddressLabels, updateQuery, createQuery, updateSettings } from './api/client.js'
+import { createRun, listAddressLabels, updateQuery, createQuery, updateSettings, listRuns, getRun } from './api/client.js'
+import { applyComputedColumns, computedFieldMeta } from './utils/computedColumns.js'
 
 function divisorsFromFieldMeta(fm) {
   const d = {}
@@ -24,6 +25,20 @@ function divisorsFromFieldMeta(fm) {
     else if (meta?.decimals === 18) d[col] = '1e18'
   }
   return d
+}
+
+/** Returns a human-readable age string like "2h ago", "5m ago", "just now". */
+function formatAge(ranAt, now) {
+  const diffMs = now - new Date(ranAt).getTime()
+  if (diffMs < 0) return 'just now'
+  const s = Math.floor(diffMs / 1000)
+  if (s < 60) return 'just now'
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m ago`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h ago`
+  const d = Math.floor(h / 24)
+  return `${d}d ago`
 }
 
 export default function App() {
@@ -47,14 +62,21 @@ export default function App() {
   const [endpointVersion, setEndpointVersion] = useState(0)
   const [addressLabels, setAddressLabels] = useState([])
   const [prefillGql, setPrefillGql] = useState(null)
+  const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
     listAddressLabels().then(({ data }) => { if (data) setAddressLabels(data) })
   }, [])
 
+  // Keep `now` ticking so staleness labels stay current without a page refresh
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000)
+    return () => clearInterval(id)
+  }, [])
+
   const abortRef = useRef(null)
 
-  const handleSelectQuery = useCallback((query) => {
+  const handleSelectQuery = useCallback(async (query) => {
     setSelectedQuery(query)
     setCurrentRun(null)
     setRunError(null)
@@ -63,6 +85,19 @@ export default function App() {
     setColDivisors(divisorsFromFieldMeta(fm))
     setTab('editor')
     setHistoryOpen(false)
+
+    // Auto-load the most recent saved run for this query (silent; no spinner)
+    if (query?.id) {
+      try {
+        const { data: runs } = await listRuns(query.id, 1, 0)
+        if (Array.isArray(runs) && runs.length > 0) {
+          const { data: run } = await getRun(runs[0].id)
+          if (run) setCurrentRun(run)
+        }
+      } catch {
+        // silently ignore — user can always run manually
+      }
+    }
   }, [])
 
   const handleNewQuery = useCallback(() => {
@@ -237,6 +272,12 @@ export default function App() {
     return rows
   }, [currentRun, startDate, endDate, activeFilters])
 
+  // Apply computed columns on top of the filtered rows
+  const computedRows = useMemo(() => {
+    const defs = Array.isArray(selectedQuery?.computed_columns) ? selectedQuery.computed_columns : []
+    return applyComputedColumns(filteredRows, defs, colDivisors)
+  }, [filteredRows, selectedQuery?.computed_columns, colDivisors])
+
   // True when the current date pickers extend *beyond* what the run fetched from the
   // server — i.e. the results may be missing data and the user should re-run.
   // Narrowing the range is fine (client-side filter handles it), only widening matters.
@@ -260,9 +301,11 @@ export default function App() {
     return false
   }, [currentRun, startDate, endDate, running])
 
-  const fieldMeta = typeof selectedQuery?.field_meta === 'object'
-    ? selectedQuery.field_meta
-    : {}
+  const fieldMeta = useMemo(() => {
+    const base = typeof selectedQuery?.field_meta === 'object' ? selectedQuery.field_meta : {}
+    const computed = computedFieldMeta(selectedQuery?.computed_columns)
+    return { ...base, ...computed }
+  }, [selectedQuery?.field_meta, selectedQuery?.computed_columns])
 
   return (
     <div className="app-layout">
@@ -400,12 +443,27 @@ export default function App() {
                 </div>
               )}
 
+              {/* Staleness warning — results are more than 72 h old */}
+              {currentRun?.ran_at && !running && (() => {
+                const ageMs = now - new Date(currentRun.ran_at).getTime()
+                return ageMs >= 72 * 60 * 60 * 1000
+              })() && (
+                <div className="warning-banner">
+                  ⚠ Results are more than 72 hours old — consider re-running to get fresh data.
+                </div>
+              )}
+
               {/* Run stats */}
               {currentRun && (
                 <div style={{ fontSize: 12, color: 'var(--color-text-muted)', display: 'flex', gap: 16, alignItems: 'center' }}>
                   <span>{currentRun.row_count} rows</span>
                   <span>{currentRun.page_count} pages</span>
                   <span>{currentRun.duration_ms}ms</span>
+                  {currentRun.ran_at && !running && (
+                    <span style={{ color: 'var(--color-text-muted)' }}>
+                      Results from {formatAge(currentRun.ran_at, now)}
+                    </span>
+                  )}
                   <button
                     onClick={() => setQueryPreviewOpen(true)}
                     title="View the query and variables sent to the endpoint"
@@ -462,7 +520,7 @@ export default function App() {
               {/* Results subtabs */}
               {currentRun?.rows && currentRun.rows.length > 0 && (
                 <ResultsView
-                  rows={filteredRows}
+                  rows={computedRows}
                   fieldMeta={fieldMeta}
                   keyField={selectedQuery?.key_field || 'id'}
                   addressLabels={addressLabels}
@@ -475,7 +533,9 @@ export default function App() {
 
               {!running && !currentRun && !runError && (
                 <div style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>
-                  Select a query and click Run to see results.
+                  {selectedQuery
+                    ? 'No previous runs found — click Run to fetch results.'
+                    : 'Select a query and click Run to see results.'}
                 </div>
               )}
             </div>

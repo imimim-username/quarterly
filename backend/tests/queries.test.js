@@ -41,7 +41,8 @@ if (nativeAvailable) {
         chain_field TEXT NOT NULL DEFAULT 'chain', field_meta TEXT NOT NULL DEFAULT '{}',
         key_field TEXT NOT NULL DEFAULT 'id', is_builtin INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-        chart_views TEXT NOT NULL DEFAULT '[]'
+        chart_views TEXT NOT NULL DEFAULT '[]',
+        computed_columns TEXT NOT NULL DEFAULT '[]'
       );
       INSERT OR IGNORE INTO settings (key, value) VALUES ('builtin_imported', '0');
     `);
@@ -129,6 +130,79 @@ if (nativeAvailable) {
     });
   });
 
+  describe('computed_columns round-trip', () => {
+    const basePayload = { name: 'CC Query', gql: '{ x }', result_path: 'data.x' };
+    const cols = [{ name: 'ratio', label: 'Ratio', formula: 'a / b' }];
+
+    test('defaults to empty array when omitted', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const res = await request(app).post('/api/queries').send(basePayload);
+      expect(res.status).toBe(201);
+      expect(res.body.computed_columns).toEqual([]);
+      db.close();
+    });
+
+    test('round-trips computed_columns through POST/GET', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const created = await request(app).post('/api/queries').send({ ...basePayload, computed_columns: cols });
+      expect(created.status).toBe(201);
+      expect(created.body.computed_columns).toEqual(cols);
+
+      const got = await request(app).get(`/api/queries/${created.body.id}`);
+      expect(got.status).toBe(200);
+      expect(got.body.computed_columns).toEqual(cols);
+      db.close();
+    });
+
+    test('round-trips computed_columns through PUT', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const created = await request(app).post('/api/queries').send(basePayload);
+      const id = created.body.id;
+
+      const updated = await request(app).put(`/api/queries/${id}`).send({ computed_columns: cols });
+      expect(updated.status).toBe(200);
+      expect(updated.body.computed_columns).toEqual(cols);
+      db.close();
+    });
+
+    test('accepts computed_columns as a JSON string', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const res = await request(app).post('/api/queries').send({
+        ...basePayload,
+        computed_columns: JSON.stringify(cols),
+      });
+      expect(res.status).toBe(201);
+      expect(res.body.computed_columns).toEqual(cols);
+      db.close();
+    });
+
+    test('invalid computed_columns JSON string → 400', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const res = await request(app).post('/api/queries').send({
+        ...basePayload,
+        computed_columns: 'not-json',
+      });
+      expect(res.status).toBe(400);
+      db.close();
+    });
+
+    test('computed_columns as object (not array) → 400', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const res = await request(app).post('/api/queries').send({
+        ...basePayload,
+        computed_columns: { ratio: 'a / b' },
+      });
+      expect(res.status).toBe(400);
+      db.close();
+    });
+  });
+
   describe('POST /api/queries/import', () => {
     const builtinQuery = {
       name: 'My Builtin',
@@ -172,5 +246,9 @@ if (nativeAvailable) {
     test.skip('DELETE cascades (skipped)', () => {});
     test.skip('import is_builtin=1: re-import skips (skipped)', () => {});
     test.skip('import is_builtin=0: re-import updates (skipped)', () => {});
+    test.skip('computed_columns defaults to [] (skipped)', () => {});
+    test.skip('computed_columns round-trips POST/GET (skipped)', () => {});
+    test.skip('computed_columns round-trips PUT (skipped)', () => {});
+    test.skip('invalid computed_columns → 400 (skipped)', () => {});
   });
 }

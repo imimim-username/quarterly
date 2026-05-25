@@ -3,6 +3,7 @@ import CodeMirror from '@uiw/react-codemirror'
 import { javascript } from '@codemirror/lang-javascript'
 import { createQuery, updateQuery, deleteQuery } from '../api/client.js'
 import VariablePanel from './VariablePanel.jsx'
+import ComputedColumnsEditor from './ComputedColumnsEditor.jsx'
 
 const PAGINATION_STYLES = ['offset', 'cursor', 'none']
 const DATE_FORMATS = ['unix_seconds', 'unix_ms', 'iso8601']
@@ -25,6 +26,7 @@ function emptyQuery() {
     key_field: 'id',
     variable_defs: [],
     field_meta: {},
+    computed_columns: [],
     is_builtin: 0,
   }
 }
@@ -45,6 +47,7 @@ export default function QueryEditor({ query, prefillGql, onSave, onDelete, onRun
         ...emptyQuery(),
         ...query,
         variable_defs: Array.isArray(query.variable_defs) ? query.variable_defs : [],
+        computed_columns: Array.isArray(query.computed_columns) ? query.computed_columns : [],
       })
       setFieldMetaText(
         typeof query.field_meta === 'object'
@@ -75,6 +78,7 @@ export default function QueryEditor({ query, prefillGql, onSave, onDelete, onRun
       ...form,
       field_meta: JSON.stringify(field_meta),
       variable_defs: JSON.stringify(form.variable_defs),
+      computed_columns: JSON.stringify(form.computed_columns || []),
     }
 
     setSaving(true)
@@ -205,6 +209,14 @@ export default function QueryEditor({ query, prefillGql, onSave, onDelete, onRun
           rows={6}
           style={{ fontFamily: 'var(--font-mono)', fontSize: 12, resize: 'vertical' }}
           placeholder='{"fieldName": {"label": "Label", "decimals": 18}}'
+        />
+      </div>
+
+      <div className="form-group">
+        <label>Computed Columns</label>
+        <ComputedColumnsEditor
+          defs={form.computed_columns || []}
+          onChange={defs => set('computed_columns', defs)}
         />
       </div>
 
