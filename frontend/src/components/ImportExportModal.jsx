@@ -4,9 +4,9 @@ import { listQueries, exportBundle, previewImport, commitImport } from '../api/c
 const FIELD_GROUPS = [
   { key: 'gql',       label: 'GraphQL' },
   { key: 'variables', label: 'Variables' },
-  { key: 'display',   label: 'Display (field labels, chart views)' },
+  { key: 'display',   label: 'Display (field labels, chart views, computed columns)' },
   { key: 'info',      label: 'Info (description, category)' },
-  { key: 'execution', label: 'Execution (pagination, chain, dates)' },
+  { key: 'execution', label: 'Execution (pagination, chain, dates, timestamp extraction)' },
 ]
 
 // ─── Small helpers ────────────────────────────────────────────────────────────

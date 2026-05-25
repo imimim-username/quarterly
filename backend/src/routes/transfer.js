@@ -10,25 +10,30 @@ const QUERY_EXPORT_FIELDS = [
   'name', 'description', 'category', 'gql', 'variable_defs', 'result_path',
   'pagination_style', 'cursor_path', 'has_next_path', 'date_format',
   'chain_mode', 'chain_var_name', 'chain_field', 'field_meta', 'key_field',
-  'is_builtin', 'chart_views',
+  'is_builtin', 'chart_views', 'computed_columns', 'timestamp_extraction',
 ];
 
 // Maps logical field group names to DB column names
 const QUERY_FIELD_GROUPS = {
   gql: ['gql'],
   variables: ['variable_defs'],
-  display: ['field_meta', 'key_field', 'chart_views'],
+  display: ['field_meta', 'key_field', 'chart_views', 'computed_columns'],
   info: ['description', 'category'],
-  execution: ['result_path', 'pagination_style', 'cursor_path', 'has_next_path', 'date_format', 'chain_mode', 'chain_var_name', 'chain_field'],
+  execution: ['result_path', 'pagination_style', 'cursor_path', 'has_next_path', 'date_format', 'chain_mode', 'chain_var_name', 'chain_field', 'timestamp_extraction'],
 };
+
+// Columns that must be JSON-serialised when written to the DB
+const JSON_COLUMNS = new Set(['variable_defs', 'field_meta', 'chart_views', 'computed_columns', 'timestamp_extraction']);
 
 function rowToExportQuery(row) {
   const q = {};
   for (const f of QUERY_EXPORT_FIELDS) q[f] = row[f];
-  // Parse JSON fields
+  // Parse JSON fields so the bundle contains proper objects/arrays, not strings
   try { q.variable_defs = JSON.parse(row.variable_defs || '[]'); } catch { q.variable_defs = []; }
   try { q.field_meta = JSON.parse(row.field_meta || '{}'); } catch { q.field_meta = {}; }
   try { q.chart_views = JSON.parse(row.chart_views || '[]'); } catch { q.chart_views = []; }
+  try { q.computed_columns = JSON.parse(row.computed_columns || '[]'); } catch { q.computed_columns = []; }
+  try { q.timestamp_extraction = row.timestamp_extraction ? JSON.parse(row.timestamp_extraction) : null; } catch { q.timestamp_extraction = null; }
   return q;
 }
 
@@ -196,7 +201,7 @@ module.exports = function transferRoutes(db) {
                 if (bundleQuery[col] === undefined) continue;
                 setClauses.push(`${col} = ?`);
                 const v = bundleQuery[col];
-                values.push(['variable_defs', 'field_meta', 'chart_views'].includes(col) ? serialize(v) : v);
+                values.push(JSON_COLUMNS.has(col) ? serialize(v) : v);
               }
               if (setClauses.length > 0) {
                 setClauses.push('updated_at = ?');
@@ -225,8 +230,9 @@ module.exports = function transferRoutes(db) {
                 (name, description, category, gql, variable_defs, result_path,
                  pagination_style, cursor_path, has_next_path, date_format,
                  chain_mode, chain_var_name, chain_field, field_meta, key_field,
-                 is_builtin, chart_views, created_at, updated_at)
-              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 is_builtin, chart_views, computed_columns, timestamp_extraction,
+                 created_at, updated_at)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             `).run(
               newName,
               bundleQuery.description || '',
@@ -245,6 +251,8 @@ module.exports = function transferRoutes(db) {
               bundleQuery.key_field || 'id',
               bundleQuery.is_builtin ? 1 : 0,
               serialize(bundleQuery.chart_views ?? []),
+              serialize(bundleQuery.computed_columns ?? []),
+              bundleQuery.timestamp_extraction != null ? serialize(bundleQuery.timestamp_extraction) : null,
               now,
               now,
             );
