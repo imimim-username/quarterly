@@ -233,16 +233,23 @@ export default function QueryEditor({ query, prefillGql, onSave, onDelete, onRun
       </div>
 
       <div className="form-group">
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <label>Parse Timestamp from Field</label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: form.timestamp_extraction ? 8 : 0 }}>
           <input
             type="checkbox"
+            id="ts-extraction-enabled"
             checked={!!form.timestamp_extraction}
             onChange={e => set('timestamp_extraction', e.target.checked ? { ...DEFAULT_TS_EXTRACTION } : null)}
           />
-          Parse Timestamp from Field
-        </label>
+          <span
+            onClick={() => set('timestamp_extraction', form.timestamp_extraction ? null : { ...DEFAULT_TS_EXTRACTION })}
+            style={{ cursor: 'pointer', fontSize: 13 }}
+          >
+            {form.timestamp_extraction ? 'Enabled — split a field value to extract a Unix timestamp' : 'Disabled'}
+          </span>
+        </div>
         {form.timestamp_extraction && (
-          <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1.5fr 0.6fr 0.8fr 1fr 1fr', gap: 8 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 0.6fr 0.8fr 1fr 1fr', gap: 8 }}>
             <div className="form-group" style={{ margin: 0 }}>
               <label style={{ fontSize: 11 }}>Source Field</label>
               <input
