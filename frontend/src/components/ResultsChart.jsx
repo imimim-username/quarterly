@@ -154,7 +154,7 @@ function makeSeries(fields, colorOffset, yAxisIndex, seriesType, chartData, fiel
   })
 }
 
-function YAxisSelector({ label, fields, setFields, allFields, colorOffset, fieldMeta, seriesType, setSeriesType, yMode, setYMode, showYMode, colDivisors, onDivisorChange }) {
+function YAxisSelector({ label, fields, setFields, allFields, colorOffset, fieldMeta, seriesType, setSeriesType, yMode, setYMode, showYMode, scaleY, setScaleY, colDivisors, onDivisorChange }) {
   const available = allFields.filter(c => !fields.includes(c))
 
   const add = (col) => { if (col) setFields(prev => [...prev, col]) }
@@ -187,6 +187,13 @@ function YAxisSelector({ label, fields, setFields, allFields, colorOffset, field
             {Y_MODE_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
           </select>
         )}
+        <label
+          style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 11, cursor: 'pointer', userSelect: 'none', fontWeight: 'normal' }}
+          title="Scale Y axis to data range instead of starting at zero"
+        >
+          <input type="checkbox" checked={scaleY} onChange={e => setScaleY(e.target.checked)} style={{ cursor: 'pointer' }} />
+          scale
+        </label>
       </label>
       <select value="" onChange={e => { add(e.target.value); e.target.value = '' }}>
         <option value="">Add column…</option>
@@ -244,6 +251,8 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
   const [rightYMode, setRightYMode] = useState('raw')
   const [leftAggregation, setLeftAggregation] = useState('sum')
   const [rightAggregation, setRightAggregation] = useState('sum')
+  const [leftScaleY, setLeftScaleY] = useState(false)
+  const [rightScaleY, setRightScaleY] = useState(false)
   const [xSortDir, setXSortDir] = useState('asc')
   const [showLegend, setShowLegend] = useState(true)
   const [savingView, setSavingView] = useState(false)
@@ -262,6 +271,8 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
     setRightYMode(view.rightYMode || 'raw')
     setLeftAggregation(view.leftAggregation || 'sum')
     setRightAggregation(view.rightAggregation || 'sum')
+    setLeftScaleY(view.leftScaleY || false)
+    setRightScaleY(view.rightScaleY || false)
     setXSortDir(view.xSortDir || 'asc')
     setShowLegend(view.showLegend !== false)
     if (view.colDivisors) onDivisorChange?.(view.colDivisors)
@@ -285,6 +296,8 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
         rightYMode,
         leftAggregation,
         rightAggregation,
+        leftScaleY,
+        rightScaleY,
         xSortDir,
         showLegend,
         colDivisors,
@@ -388,6 +401,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
         {
           type: 'value',
           position: 'left',
+          scale: leftScaleY,
           name: leftName,
           nameLocation: 'middle',
           nameGap: 50,
@@ -400,6 +414,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
           type: 'value',
           position: 'right',
           show: hasRightAxis,
+          scale: rightScaleY,
           name: rightName,
           nameLocation: 'middle',
           nameGap: 50,
@@ -411,7 +426,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
       ],
       series: allSeries,
     }
-  }, [hasChart, xField, leftFields, rightFields, leftType, rightType, leftChartData, rightChartData, xLabels, fieldMeta, hasRightAxis, showLegend])
+  }, [hasChart, xField, leftFields, rightFields, leftType, rightType, leftChartData, rightChartData, xLabels, fieldMeta, hasRightAxis, showLegend, leftScaleY, rightScaleY])
 
   if (!rows || rows.length === 0) {
     return <div style={{ color: 'var(--color-text-muted)', padding: 16 }}>No results to chart.</div>
@@ -445,6 +460,8 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
           yMode={leftYMode}
           setYMode={setLeftYMode}
           showYMode={isTimestampX}
+          scaleY={leftScaleY}
+          setScaleY={setLeftScaleY}
           colDivisors={colDivisors}
           onDivisorChange={onDivisorChange}
         />
@@ -464,6 +481,8 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
           yMode={rightYMode}
           setYMode={setRightYMode}
           showYMode={isTimestampX}
+          scaleY={rightScaleY}
+          setScaleY={setRightScaleY}
           colDivisors={colDivisors}
           onDivisorChange={onDivisorChange}
         />
