@@ -82,37 +82,39 @@ function aggregate(values, method) {
   }
 }
 
-function buildChartData(rows, xField, allYFields, colDivisors, groupBy, yMode, aggregation = 'sum') {
+function buildChartData(rows, xField, allYFields, colDivisors, groupBy, yMode, aggregation = 'sum', xSortDir = 'asc') {
   if (!rows || !xField || allYFields.length === 0) return []
 
-  let data
-  if (groupBy === 'none') {
-    data = rows.map(row => {
-      const point = { x: row[xField] }
-      for (const f of allYFields) point[f] = applyDivisorNumeric(row[f], colDivisors[f])
-      return point
-    })
-  } else {
-    const map = new Map()
-    for (const row of rows) {
-      const bucket = bucketTimestamp(row[xField], groupBy)
-      if (!map.has(bucket)) {
-        map.set(bucket, Object.fromEntries(allYFields.map(f => [f, []])))
-      }
-      const entry = map.get(bucket)
-      for (const f of allYFields) {
-        const v = applyDivisorNumeric(row[f], colDivisors[f])
-        if (v !== null && !isNaN(v)) entry[f].push(v)
-      }
+  // Determine the bucket key for each row. When groupBy='none' the key is the
+  // raw x value (so duplicate x values are merged); otherwise it is time-normalised.
+  const bucketKey = groupBy === 'none'
+    ? row => row[xField]
+    : row => bucketTimestamp(row[xField], groupBy)
+
+  const map = new Map()
+  for (const row of rows) {
+    const key = bucketKey(row)
+    if (!map.has(key)) map.set(key, Object.fromEntries(allYFields.map(f => [f, []])))
+    const entry = map.get(key)
+    for (const f of allYFields) {
+      const v = applyDivisorNumeric(row[f], colDivisors[f])
+      if (v !== null && !isNaN(v)) entry[f].push(v)
     }
-    data = [...map.entries()]
-      .sort((a, b) => a[0] - b[0])
-      .map(([bucket, arrays]) => {
-        const point = { x: bucket }
-        for (const f of allYFields) point[f] = aggregate(arrays[f], aggregation)
-        return point
-      })
   }
+
+  let data = [...map.entries()].map(([key, arrays]) => {
+    const point = { x: key }
+    for (const f of allYFields) point[f] = aggregate(arrays[f], aggregation)
+    return point
+  })
+
+  // Sort by x value; numeric when possible, lexicographic otherwise
+  data.sort((a, b) => {
+    const an = Number(a.x), bn = Number(b.x)
+    if (!isNaN(an) && !isNaN(bn)) return an - bn
+    return String(a.x).localeCompare(String(b.x))
+  })
+  if (xSortDir === 'desc') data.reverse()
 
   if (yMode === 'cumulative') {
     const running = Object.fromEntries(allYFields.map(f => [f, 0]))
@@ -252,6 +254,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
   const [rightYMode, setRightYMode] = useState('raw')
   const [leftAggregation, setLeftAggregation] = useState('sum')
   const [rightAggregation, setRightAggregation] = useState('sum')
+  const [xSortDir, setXSortDir] = useState('asc')
   const [showLegend, setShowLegend] = useState(true)
   const [savingView, setSavingView] = useState(false)
   const [savedMsg, setSavedMsg] = useState('')
@@ -269,6 +272,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
     setRightYMode(view.rightYMode || 'raw')
     setLeftAggregation(view.leftAggregation || 'sum')
     setRightAggregation(view.rightAggregation || 'sum')
+    setXSortDir(view.xSortDir || 'asc')
     setShowLegend(view.showLegend !== false)
     if (view.colDivisors) onDivisorChange?.(view.colDivisors)
   }
@@ -291,6 +295,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
         rightYMode,
         leftAggregation,
         rightAggregation,
+        xSortDir,
         showLegend,
         colDivisors,
       }
@@ -312,13 +317,13 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
   const hasChart = xField && (leftFields.length > 0 || rightFields.length > 0)
 
   const leftChartData = useMemo(
-    () => buildChartData(rows, xField, leftFields, colDivisors, groupBy, leftYMode, leftAggregation),
-    [rows, xField, JSON.stringify(leftFields), colDivisors, groupBy, leftYMode, leftAggregation]
+    () => buildChartData(rows, xField, leftFields, colDivisors, groupBy, leftYMode, leftAggregation, xSortDir),
+    [rows, xField, JSON.stringify(leftFields), colDivisors, groupBy, leftYMode, leftAggregation, xSortDir]
   )
 
   const rightChartData = useMemo(
-    () => buildChartData(rows, xField, rightFields, colDivisors, groupBy, rightYMode, rightAggregation),
-    [rows, xField, JSON.stringify(rightFields), colDivisors, groupBy, rightYMode, rightAggregation]
+    () => buildChartData(rows, xField, rightFields, colDivisors, groupBy, rightYMode, rightAggregation, xSortDir),
+    [rows, xField, JSON.stringify(rightFields), colDivisors, groupBy, rightYMode, rightAggregation, xSortDir]
   )
 
   // Use whichever dataset is available for x-axis labels
@@ -429,7 +434,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
 
         <div className="form-group" style={{ minWidth: 160, margin: 0 }}>
           <label>X Field</label>
-          <select value={xField} onChange={e => { setXField(e.target.value); setGroupBy('none') }}>
+          <select value={xField} onChange={e => { setXField(e.target.value); setGroupBy('none'); setXSortDir('asc') }}>
             <option value="">Select…</option>
             {columns.map(c => <option key={c} value={c}>{fieldMeta[c]?.label || c}</option>)}
           </select>
@@ -452,7 +457,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
           showYMode={isTimestampX}
           aggregation={leftAggregation}
           setAggregation={setLeftAggregation}
-          showAggregation={isTimestampX && groupBy !== 'none'}
+          showAggregation={isTimestampX}
           colDivisors={colDivisors}
           onDivisorChange={onDivisorChange}
         />
@@ -474,7 +479,7 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
           showYMode={isTimestampX}
           aggregation={rightAggregation}
           setAggregation={setRightAggregation}
-          showAggregation={isTimestampX && groupBy !== 'none'}
+          showAggregation={isTimestampX}
           colDivisors={colDivisors}
           onDivisorChange={onDivisorChange}
         />
@@ -487,6 +492,16 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
               <select value={groupBy} onChange={e => setGroupBy(e.target.value)}>
                 {GROUP_BY_OPTIONS.map(g => <option key={g} value={g}>{g}</option>)}
               </select>
+            </div>
+            <div className="form-group" style={{ margin: 0 }}>
+              <label>X Order</label>
+              <button
+                onClick={() => setXSortDir(d => d === 'asc' ? 'desc' : 'asc')}
+                style={{ background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 4, padding: '4px 10px', cursor: 'pointer', fontSize: 13 }}
+                title={xSortDir === 'asc' ? 'Ascending — click to switch to descending' : 'Descending — click to switch to ascending'}
+              >
+                {xSortDir === 'asc' ? '↑ Asc' : '↓ Desc'}
+              </button>
             </div>
           </>
         )}
