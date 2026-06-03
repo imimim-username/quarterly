@@ -642,6 +642,17 @@ export default function App() {
 /**
  * Inner component for table/chart subtabs.
  */
+/**
+ * Inner component for table/chart subtabs.
+ *
+ * Both sub-components are kept mounted at all times (hidden via display:none
+ * rather than conditional rendering). This preserves ResultsChart's in-memory
+ * state (X/Y field selections, colors, zoom, etc.) when the user temporarily
+ * switches to the Table tab to tweak a divisor, so they don't have to
+ * re-configure the chart when they switch back.  Updated props (colDivisors,
+ * rows) flow through to the hidden component and are reflected immediately on
+ * return.
+ */
 function ResultsView({ rows, fieldMeta, keyField, addressLabels = [], chartViews = [], onSaveView, colDivisors = {}, onDivisorChange, colorSchemes = [], onSchemesChange }) {
   const [view, setView] = useState('table')
 
@@ -651,8 +662,13 @@ function ResultsView({ rows, fieldMeta, keyField, addressLabels = [], chartViews
         <button className={view === 'table' ? 'active' : ''} onClick={() => setView('table')}>Table</button>
         <button className={view === 'chart' ? 'active' : ''} onClick={() => setView('chart')}>Chart</button>
       </div>
-      {view === 'table' && <ResultsTable rows={rows} fieldMeta={fieldMeta} keyField={keyField} colDivisors={colDivisors} onDivisorChange={onDivisorChange} addressLabels={addressLabels} />}
-      {view === 'chart' && <ResultsChart rows={rows} fieldMeta={fieldMeta} keyField={keyField} colDivisors={colDivisors} onDivisorChange={onDivisorChange} chartViews={chartViews} onSaveView={onSaveView} colorSchemes={colorSchemes} onSchemesChange={onSchemesChange} />}
+      {/* Keep both mounted — hide with display:none to preserve chart state across tab switches */}
+      <div style={{ display: view === 'table' ? '' : 'none' }}>
+        <ResultsTable rows={rows} fieldMeta={fieldMeta} keyField={keyField} colDivisors={colDivisors} onDivisorChange={onDivisorChange} addressLabels={addressLabels} />
+      </div>
+      <div style={{ display: view === 'chart' ? '' : 'none' }}>
+        <ResultsChart rows={rows} fieldMeta={fieldMeta} keyField={keyField} colDivisors={colDivisors} onDivisorChange={onDivisorChange} chartViews={chartViews} onSaveView={onSaveView} colorSchemes={colorSchemes} onSchemesChange={onSchemesChange} />
+      </div>
     </div>
   )
 }
