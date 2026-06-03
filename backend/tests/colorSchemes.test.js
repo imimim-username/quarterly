@@ -31,6 +31,7 @@ if (nativeAvailable) {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE,
         colors TEXT NOT NULL DEFAULT '[]',
+        theme TEXT DEFAULT NULL,
         is_default INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -47,13 +48,15 @@ if (nativeAvailable) {
   }
 
   /** Insert a scheme directly and return its id. */
-  function seedScheme(db, name, colors = ['#ff0000', '#00ff00'], isDefault = 0) {
+  function seedScheme(db, name, colors = ['#ff0000', '#00ff00'], isDefault = 0, theme = null) {
     const now = new Date().toISOString();
     const result = db.prepare(
-      'INSERT INTO color_schemes (name, colors, is_default, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
-    ).run(name, JSON.stringify(colors), isDefault, now, now);
+      'INSERT INTO color_schemes (name, colors, theme, is_default, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run(name, JSON.stringify(colors), theme ? JSON.stringify(theme) : null, isDefault, now, now);
     return result.lastInsertRowid;
   }
+
+  const VALID_THEME = { bg: '#1a1a2e', textColor: '#c0c0c0', gridColor: '#3a3a5a', axisColor: '#5a5a8a' };
 
   // ── GET / ────────────────────────────────────────────────────────────────────
 
@@ -90,6 +93,28 @@ if (nativeAvailable) {
       expect(warm.is_default).toBe(false);
       db.close();
     });
+
+    test('scheme without theme returns theme: null', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      seedScheme(db, 'NoTheme', ['#ff0000']);
+
+      const res = await request(app).get('/api/color-schemes');
+      expect(res.status).toBe(200);
+      expect(res.body[0].theme).toBeNull();
+      db.close();
+    });
+
+    test('scheme with theme returns theme object', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      seedScheme(db, 'Themed', ['#ff0000'], 0, VALID_THEME);
+
+      const res = await request(app).get('/api/color-schemes');
+      expect(res.status).toBe(200);
+      expect(res.body[0].theme).toEqual(VALID_THEME);
+      db.close();
+    });
   });
 
   // ── GET /:id ─────────────────────────────────────────────────────────────────
@@ -114,6 +139,28 @@ if (nativeAvailable) {
       const res = await request(app).get('/api/color-schemes/9999');
       expect(res.status).toBe(404);
       expect(res.body.error).toBe('not_found');
+      db.close();
+    });
+
+    test('returns theme: null for scheme without theme', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const id = seedScheme(db, 'Plain', ['#ff0000']);
+
+      const res = await request(app).get(`/api/color-schemes/${id}`);
+      expect(res.status).toBe(200);
+      expect(res.body.theme).toBeNull();
+      db.close();
+    });
+
+    test('returns theme object for scheme with theme', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const id = seedScheme(db, 'Themed', ['#ff0000'], 0, VALID_THEME);
+
+      const res = await request(app).get(`/api/color-schemes/${id}`);
+      expect(res.status).toBe(200);
+      expect(res.body.theme).toEqual(VALID_THEME);
       db.close();
     });
   });
@@ -245,6 +292,126 @@ if (nativeAvailable) {
       expect(res.body.error).toBe('conflict');
       db.close();
     });
+
+    // Theme field — POST
+
+    test('POST without theme returns theme: null', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const res = await request(app).post('/api/color-schemes').send({
+        name: 'NoTheme',
+        colors: ['#ff0000'],
+      });
+      expect(res.status).toBe(201);
+      expect(res.body.theme).toBeNull();
+      db.close();
+    });
+
+    test('POST with theme: null returns theme: null', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const res = await request(app).post('/api/color-schemes').send({
+        name: 'NullTheme',
+        colors: ['#ff0000'],
+        theme: null,
+      });
+      expect(res.status).toBe(201);
+      expect(res.body.theme).toBeNull();
+      db.close();
+    });
+
+    test('POST with valid full theme stores and returns it', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const res = await request(app).post('/api/color-schemes').send({
+        name: 'Themed',
+        colors: ['#ff0000'],
+        theme: VALID_THEME,
+      });
+      expect(res.status).toBe(201);
+      expect(res.body.theme).toEqual(VALID_THEME);
+      db.close();
+    });
+
+    test('POST with partial theme (subset of keys) is valid', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const partial = { bg: '#000000', textColor: '#ffffff' };
+      const res = await request(app).post('/api/color-schemes').send({
+        name: 'Partial',
+        colors: ['#ff0000'],
+        theme: partial,
+      });
+      expect(res.status).toBe(201);
+      expect(res.body.theme).toEqual(partial);
+      db.close();
+    });
+
+    test('POST with theme as an array returns 400', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const res = await request(app).post('/api/color-schemes').send({
+        name: 'ArrayTheme',
+        colors: ['#ff0000'],
+        theme: ['#000000'],
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('invalid');
+      db.close();
+    });
+
+    test('POST with theme as a string returns 400', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const res = await request(app).post('/api/color-schemes').send({
+        name: 'StringTheme',
+        colors: ['#ff0000'],
+        theme: '#000000',
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('invalid');
+      db.close();
+    });
+
+    test('POST with unknown theme key returns 400', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const res = await request(app).post('/api/color-schemes').send({
+        name: 'BadKey',
+        colors: ['#ff0000'],
+        theme: { bg: '#000000', unknownKey: '#ffffff' },
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('invalid');
+      expect(res.body.message).toMatch('unknownKey');
+      db.close();
+    });
+
+    test('POST with invalid hex value in theme returns 400', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const res = await request(app).post('/api/color-schemes').send({
+        name: 'BadHexTheme',
+        colors: ['#ff0000'],
+        theme: { bg: 'not-a-color' },
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('invalid');
+      db.close();
+    });
+
+    test('POST with theme value null (clearing a single key) is valid', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const res = await request(app).post('/api/color-schemes').send({
+        name: 'NullBg',
+        colors: ['#ff0000'],
+        theme: { bg: null, textColor: '#ffffff' },
+      });
+      expect(res.status).toBe(201);
+      expect(res.body.theme).toEqual({ bg: null, textColor: '#ffffff' });
+      db.close();
+    });
   });
 
   // ── PUT /:id ─────────────────────────────────────────────────────────────────
@@ -342,6 +509,73 @@ if (nativeAvailable) {
       expect(res.body.error).toBe('conflict');
       db.close();
     });
+
+    // Theme field — PUT
+
+    test('PUT with valid theme updates theme', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const id = seedScheme(db, 'Plain', ['#ff0000']);
+
+      const res = await request(app).put(`/api/color-schemes/${id}`).send({
+        theme: VALID_THEME,
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.theme).toEqual(VALID_THEME);
+      db.close();
+    });
+
+    test('PUT with theme: null clears existing theme', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const id = seedScheme(db, 'Themed', ['#ff0000'], 0, VALID_THEME);
+
+      const res = await request(app).put(`/api/color-schemes/${id}`).send({
+        theme: null,
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.theme).toBeNull();
+      db.close();
+    });
+
+    test('PUT omitting theme preserves existing theme', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const id = seedScheme(db, 'HasTheme', ['#ff0000'], 0, VALID_THEME);
+
+      const res = await request(app).put(`/api/color-schemes/${id}`).send({
+        name: 'HasThemeRenamed',
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.theme).toEqual(VALID_THEME);
+      db.close();
+    });
+
+    test('PUT with unknown theme key returns 400', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const id = seedScheme(db, 'Scheme', ['#ff0000']);
+
+      const res = await request(app).put(`/api/color-schemes/${id}`).send({
+        theme: { bg: '#000000', bogus: '#ffffff' },
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('invalid');
+      db.close();
+    });
+
+    test('PUT with non-hex theme value returns 400', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const id = seedScheme(db, 'Scheme2', ['#ff0000']);
+
+      const res = await request(app).put(`/api/color-schemes/${id}`).send({
+        theme: { bg: 'blue' },
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('invalid');
+      db.close();
+    });
   });
 
   // ── DELETE /:id ───────────────────────────────────────────────────────────────
@@ -377,8 +611,6 @@ if (nativeAvailable) {
     test('returns 400 when trying to delete the only remaining scheme', async () => {
       const db = makeDb();
       const app = makeApp(db);
-      // Only one scheme, and it is NOT the default (to avoid hitting cannot_delete_default first)
-      // In practice the last scheme guard is separate
       const id = seedScheme(db, 'OnlyOne', ['#ffffff'], 0);
 
       const res = await request(app).delete(`/api/color-schemes/${id}`);
@@ -442,33 +674,56 @@ if (nativeAvailable) {
 
 } else {
   describe('colorSchemes.test.js — DB integration', () => {
-    test.skip('GET / returns empty array (skipped: better-sqlite3 native unavailable)', () => {});
-    test.skip('GET / returns schemes with colors as array and is_default as boolean (skipped)', () => {});
-    test.skip('GET /:id returns a single scheme (skipped)', () => {});
-    test.skip('GET /:id returns 404 for missing id (skipped)', () => {});
-    test.skip('POST / creates a scheme (skipped)', () => {});
-    test.skip('POST / rejects missing name (skipped)', () => {});
-    test.skip('POST / rejects blank name (skipped)', () => {});
-    test.skip('POST / rejects name > 255 chars (skipped)', () => {});
-    test.skip('POST / rejects missing colors (skipped)', () => {});
-    test.skip('POST / rejects empty colors (skipped)', () => {});
-    test.skip('POST / rejects colors array > 100 entries (skipped)', () => {});
-    test.skip('POST / rejects non-hex color values (skipped)', () => {});
-    test.skip('POST / accepts #rgb shorthand hex (skipped)', () => {});
-    test.skip('POST / returns 409 for duplicate name (skipped)', () => {});
-    test.skip('PUT /:id updates name and colors (skipped)', () => {});
-    test.skip('PUT /:id partial update keeps existing name (skipped)', () => {});
-    test.skip('PUT /:id partial update keeps existing colors (skipped)', () => {});
-    test.skip('PUT /:id returns 404 for missing id (skipped)', () => {});
-    test.skip('PUT /:id rejects invalid hex in colors (skipped)', () => {});
-    test.skip('PUT /:id rejects name > 255 chars (skipped)', () => {});
-    test.skip('PUT /:id returns 409 for name conflict (skipped)', () => {});
-    test.skip('DELETE /:id removes non-default scheme (skipped)', () => {});
-    test.skip('DELETE /:id returns 400 for default scheme (skipped)', () => {});
-    test.skip('DELETE /:id returns 400 for last scheme (skipped)', () => {});
-    test.skip('DELETE /:id returns 404 for missing id (skipped)', () => {});
-    test.skip('POST /:id/set-default sets new default and clears old (skipped)', () => {});
-    test.skip('POST /:id/set-default idempotent on already-default (skipped)', () => {});
-    test.skip('POST /:id/set-default returns 404 for missing id (skipped)', () => {});
+    const skipped = [
+      'GET / returns empty array',
+      'GET / returns schemes with colors as array and is_default as boolean',
+      'GET / scheme without theme returns theme: null',
+      'GET / scheme with theme returns theme object',
+      'GET /:id returns a single scheme',
+      'GET /:id returns 404 for missing id',
+      'GET /:id returns theme: null for scheme without theme',
+      'GET /:id returns theme object for scheme with theme',
+      'POST / creates a scheme',
+      'POST / rejects missing name',
+      'POST / rejects blank name',
+      'POST / rejects name > 255 chars',
+      'POST / rejects missing colors',
+      'POST / rejects empty colors',
+      'POST / rejects colors array > 100 entries',
+      'POST / rejects non-hex color values',
+      'POST / accepts #rgb shorthand hex',
+      'POST / returns 409 for duplicate name',
+      'POST / without theme returns theme: null',
+      'POST / with theme: null returns theme: null',
+      'POST / with valid full theme stores and returns it',
+      'POST / with partial theme is valid',
+      'POST / with theme as array returns 400',
+      'POST / with theme as string returns 400',
+      'POST / with unknown theme key returns 400',
+      'POST / with invalid hex in theme returns 400',
+      'POST / with theme value null (single key) is valid',
+      'PUT /:id updates name and colors',
+      'PUT /:id partial update keeps existing name',
+      'PUT /:id partial update keeps existing colors',
+      'PUT /:id returns 404 for missing id',
+      'PUT /:id rejects invalid hex in colors',
+      'PUT /:id rejects name > 255 chars',
+      'PUT /:id returns 409 for name conflict',
+      'PUT /:id with valid theme updates theme',
+      'PUT /:id with theme: null clears theme',
+      'PUT /:id omitting theme preserves existing theme',
+      'PUT /:id with unknown theme key returns 400',
+      'PUT /:id with non-hex theme value returns 400',
+      'DELETE /:id removes non-default scheme',
+      'DELETE /:id returns 400 for default scheme',
+      'DELETE /:id returns 400 for last scheme',
+      'DELETE /:id returns 404 for missing id',
+      'POST /:id/set-default sets new default and clears old',
+      'POST /:id/set-default idempotent on already-default',
+      'POST /:id/set-default returns 404 for missing id',
+    ];
+    skipped.forEach(name => {
+      test.skip(`${name} (skipped: better-sqlite3 native unavailable)`, () => {});
+    });
   });
 }

@@ -24,16 +24,23 @@ import {
   deleteColorScheme, setDefaultScheme,
 } from '../../api/client.js'
 
+const VALID_THEME = { bg: '#1a1a2e', textColor: '#c0c0c0', gridColor: '#3a3a5a', axisColor: '#5a5a8a' }
+
 const SCHEMES = [
-  { id: 1, name: 'Default', colors: ['#e94560', '#2196f3', '#4caf50'], is_default: true },
-  { id: 2, name: 'Ocean',   colors: ['#0099cc', '#005577', '#00ccaa'], is_default: false },
+  { id: 1, name: 'Default', colors: ['#e94560', '#2196f3', '#4caf50'], theme: null, is_default: true },
+  { id: 2, name: 'Ocean',   colors: ['#0099cc', '#005577', '#00ccaa'], theme: null, is_default: false },
+]
+
+const SCHEMES_WITH_THEMED = [
+  ...SCHEMES,
+  { id: 3, name: 'Branded', colors: ['#ff6b6b'], theme: VALID_THEME, is_default: false },
 ]
 
 describe('ColorSchemeManager', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     listColorSchemes.mockResolvedValue({ data: SCHEMES, ok: true })
-    createColorScheme.mockResolvedValue({ ok: true, data: { id: 99, name: 'New', colors: ['#aaaaaa'], is_default: false } })
+    createColorScheme.mockResolvedValue({ ok: true, data: { id: 99, name: 'New', colors: ['#aaaaaa'], theme: null, is_default: false } })
     updateColorScheme.mockResolvedValue({ ok: true, data: {} })
     deleteColorScheme.mockResolvedValue({ ok: true })
     setDefaultScheme.mockResolvedValue({ ok: true, data: {} })
@@ -48,7 +55,6 @@ describe('ColorSchemeManager', () => {
 
   it('shows loading state then renders scheme list', async () => {
     render(<ColorSchemeManager onClose={() => {}} onSchemesChange={() => {}} />)
-    // After data loads, scheme names appear
     await waitFor(() => expect(screen.getByText('Default')).toBeInTheDocument())
     expect(screen.getByText('Ocean')).toBeInTheDocument()
   })
@@ -56,14 +62,12 @@ describe('ColorSchemeManager', () => {
   it('shows "default" badge on the default scheme', async () => {
     render(<ColorSchemeManager onClose={() => {}} onSchemesChange={() => {}} />)
     await waitFor(() => expect(screen.getByText('Default')).toBeInTheDocument())
-    // The badge text
     expect(screen.getByText('default')).toBeInTheDocument()
   })
 
   it('does not render "Set default" button on the default scheme', async () => {
     render(<ColorSchemeManager onClose={() => {}} onSchemesChange={() => {}} />)
     await waitFor(() => expect(screen.getByText('Default')).toBeInTheDocument())
-    // Only one "Set default" button — for Ocean (not Default)
     const setDefaultBtns = screen.getAllByText('Set default')
     expect(setDefaultBtns).toHaveLength(1)
   })
@@ -71,7 +75,6 @@ describe('ColorSchemeManager', () => {
   it('does not render "Delete" button on the default scheme', async () => {
     render(<ColorSchemeManager onClose={() => {}} onSchemesChange={() => {}} />)
     await waitFor(() => expect(screen.getByText('Default')).toBeInTheDocument())
-    // Only one "Delete" button — for Ocean
     const deleteBtns = screen.getAllByText('Delete')
     expect(deleteBtns).toHaveLength(1)
   })
@@ -136,7 +139,6 @@ describe('ColorSchemeManager', () => {
     render(<ColorSchemeManager onClose={() => {}} onSchemesChange={() => {}} />)
     await waitFor(() => expect(screen.getByText('Ocean')).toBeInTheDocument())
 
-    // Both schemes have "Edit" buttons; click the second one (Ocean)
     const editBtns = screen.getAllByText('Edit')
     fireEvent.click(editBtns[1])
 
@@ -223,7 +225,6 @@ describe('ColorSchemeManager', () => {
 
     fireEvent.click(screen.getByText('+ New Scheme'))
 
-    // Name is blank by default in the new-scheme form
     const saveBtn = screen.getByText('Save')
     expect(saveBtn).toBeDisabled()
   })
@@ -265,7 +266,6 @@ describe('ColorSchemeManager', () => {
     render(<ColorSchemeManager onClose={onClose} onSchemesChange={() => {}} />)
     await waitFor(() => expect(screen.getByText('Default')).toBeInTheDocument())
 
-    // The × header button
     const closeButtons = screen.getAllByText('×')
     fireEvent.click(closeButtons[0])
 
@@ -280,5 +280,220 @@ describe('ColorSchemeManager', () => {
     fireEvent.click(screen.getByText('Close'))
 
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+})
+
+// ── Chart appearance (theme) ─────────────────────────────────────────────────
+
+describe('ColorSchemeManager — chart appearance (theme)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    listColorSchemes.mockResolvedValue({ data: SCHEMES, ok: true })
+    createColorScheme.mockResolvedValue({ ok: true, data: { id: 99, name: 'X', colors: ['#aaa'], theme: null, is_default: false } })
+    updateColorScheme.mockResolvedValue({ ok: true, data: {} })
+    deleteColorScheme.mockResolvedValue({ ok: true })
+    setDefaultScheme.mockResolvedValue({ ok: true, data: {} })
+  })
+
+  // ── Checkbox default state ───────────────────────────────────────────────────
+
+  it('"Override chart appearance" checkbox is NOT checked by default in new-scheme editor', async () => {
+    render(<ColorSchemeManager onClose={() => {}} onSchemesChange={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Default')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByText('+ New Scheme'))
+
+    const checkbox = screen.getByRole('checkbox', { name: /override chart appearance/i })
+    expect(checkbox).not.toBeChecked()
+  })
+
+  it('"Override chart appearance" checkbox is NOT checked when editing a scheme without a theme', async () => {
+    render(<ColorSchemeManager onClose={() => {}} onSchemesChange={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Ocean')).toBeInTheDocument())
+
+    const editBtns = screen.getAllByText('Edit')
+    fireEvent.click(editBtns[1]) // Ocean (theme: null)
+
+    await waitFor(() => screen.getByPlaceholderText('Scheme name…'))
+
+    const checkbox = screen.getByRole('checkbox', { name: /override chart appearance/i })
+    expect(checkbox).not.toBeChecked()
+  })
+
+  it('"Override chart appearance" checkbox IS checked when editing a scheme that already has a theme', async () => {
+    listColorSchemes.mockResolvedValue({ data: SCHEMES_WITH_THEMED, ok: true })
+    render(<ColorSchemeManager onClose={() => {}} onSchemesChange={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Branded')).toBeInTheDocument())
+
+    // Branded is the 3rd scheme; there are 2 Edit buttons for Default+Ocean (non-editable default has one)
+    // Actually Default has Edit, Ocean has Edit, Branded has Edit — 3 Edit buttons total
+    const editBtns = screen.getAllByText('Edit')
+    fireEvent.click(editBtns[2]) // Branded
+
+    await waitFor(() => screen.getByPlaceholderText('Scheme name…'))
+
+    const checkbox = screen.getByRole('checkbox', { name: /override chart appearance/i })
+    expect(checkbox).toBeChecked()
+  })
+
+  // ── Theme picker visibility ──────────────────────────────────────────────────
+
+  it('theme pickers are hidden when "Override chart appearance" is unchecked', async () => {
+    render(<ColorSchemeManager onClose={() => {}} onSchemesChange={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Default')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByText('+ New Scheme'))
+
+    expect(screen.queryByText('Background')).not.toBeInTheDocument()
+    expect(screen.queryByText('Text & labels')).not.toBeInTheDocument()
+    expect(screen.queryByText('Grid lines')).not.toBeInTheDocument()
+    expect(screen.queryByText('Axis lines')).not.toBeInTheDocument()
+  })
+
+  it('checking "Override chart appearance" reveals all 4 theme pickers', async () => {
+    render(<ColorSchemeManager onClose={() => {}} onSchemesChange={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Default')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByText('+ New Scheme'))
+
+    const checkbox = screen.getByRole('checkbox', { name: /override chart appearance/i })
+    fireEvent.click(checkbox)
+
+    expect(screen.getByText('Background')).toBeInTheDocument()
+    expect(screen.getByText('Text & labels')).toBeInTheDocument()
+    expect(screen.getByText('Grid lines')).toBeInTheDocument()
+    expect(screen.getByText('Axis lines')).toBeInTheDocument()
+  })
+
+  it('unchecking "Override chart appearance" hides the theme pickers again', async () => {
+    render(<ColorSchemeManager onClose={() => {}} onSchemesChange={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Default')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByText('+ New Scheme'))
+
+    const checkbox = screen.getByRole('checkbox', { name: /override chart appearance/i })
+    fireEvent.click(checkbox) // check
+    expect(screen.getByText('Background')).toBeInTheDocument()
+
+    fireEvent.click(checkbox) // uncheck
+    expect(screen.queryByText('Background')).not.toBeInTheDocument()
+  })
+
+  it('theme pickers are visible by default when editing a scheme that has a theme', async () => {
+    listColorSchemes.mockResolvedValue({ data: SCHEMES_WITH_THEMED, ok: true })
+    render(<ColorSchemeManager onClose={() => {}} onSchemesChange={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Branded')).toBeInTheDocument())
+
+    const editBtns = screen.getAllByText('Edit')
+    fireEvent.click(editBtns[2])
+
+    await waitFor(() => screen.getByPlaceholderText('Scheme name…'))
+
+    expect(screen.getByText('Background')).toBeInTheDocument()
+    expect(screen.getByText('Text & labels')).toBeInTheDocument()
+    expect(screen.getByText('Grid lines')).toBeInTheDocument()
+    expect(screen.getByText('Axis lines')).toBeInTheDocument()
+  })
+
+  // ── theme value saved/not saved ──────────────────────────────────────────────
+
+  it('saving a new scheme without checking theme passes theme: null to createColorScheme', async () => {
+    render(<ColorSchemeManager onClose={() => {}} onSchemesChange={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Default')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByText('+ New Scheme'))
+    fireEvent.change(screen.getByPlaceholderText('Scheme name…'), { target: { value: 'NoTheme' } })
+    fireEvent.click(screen.getByText('Save'))
+
+    await waitFor(() =>
+      expect(createColorScheme).toHaveBeenCalledWith(
+        expect.objectContaining({ theme: null }),
+      )
+    )
+  })
+
+  it('saving a new scheme with theme checked passes a theme object to createColorScheme', async () => {
+    render(<ColorSchemeManager onClose={() => {}} onSchemesChange={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Default')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByText('+ New Scheme'))
+    fireEvent.change(screen.getByPlaceholderText('Scheme name…'), { target: { value: 'WithTheme' } })
+
+    const checkbox = screen.getByRole('checkbox', { name: /override chart appearance/i })
+    fireEvent.click(checkbox)
+
+    fireEvent.click(screen.getByText('Save'))
+
+    await waitFor(() => {
+      expect(createColorScheme).toHaveBeenCalledTimes(1)
+      const [payload] = createColorScheme.mock.calls[0]
+      expect(payload.theme).not.toBeNull()
+      expect(typeof payload.theme).toBe('object')
+      expect(payload.theme).toHaveProperty('bg')
+      expect(payload.theme).toHaveProperty('textColor')
+      expect(payload.theme).toHaveProperty('gridColor')
+      expect(payload.theme).toHaveProperty('axisColor')
+    })
+  })
+
+  it('saving an existing scheme (no theme) without checking theme passes theme: null to updateColorScheme', async () => {
+    render(<ColorSchemeManager onClose={() => {}} onSchemesChange={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Ocean')).toBeInTheDocument())
+
+    const editBtns = screen.getAllByText('Edit')
+    fireEvent.click(editBtns[1])
+    await waitFor(() => screen.getByPlaceholderText('Scheme name…'))
+
+    fireEvent.click(screen.getByText('Save'))
+
+    await waitFor(() =>
+      expect(updateColorScheme).toHaveBeenCalledWith(
+        2,
+        expect.objectContaining({ theme: null }),
+      )
+    )
+  })
+
+  it('unchecking theme on a scheme-with-theme and saving passes theme: null', async () => {
+    listColorSchemes.mockResolvedValue({ data: SCHEMES_WITH_THEMED, ok: true })
+    render(<ColorSchemeManager onClose={() => {}} onSchemesChange={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Branded')).toBeInTheDocument())
+
+    const editBtns = screen.getAllByText('Edit')
+    fireEvent.click(editBtns[2])
+    await waitFor(() => screen.getByPlaceholderText('Scheme name…'))
+
+    // Checkbox should be pre-checked; uncheck it
+    const checkbox = screen.getByRole('checkbox', { name: /override chart appearance/i })
+    expect(checkbox).toBeChecked()
+    fireEvent.click(checkbox)
+
+    fireEvent.click(screen.getByText('Save'))
+
+    await waitFor(() =>
+      expect(updateColorScheme).toHaveBeenCalledWith(
+        3,
+        expect.objectContaining({ theme: null }),
+      )
+    )
+  })
+
+  it('saving a scheme-with-theme while checkbox stays checked passes theme object', async () => {
+    listColorSchemes.mockResolvedValue({ data: SCHEMES_WITH_THEMED, ok: true })
+    render(<ColorSchemeManager onClose={() => {}} onSchemesChange={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Branded')).toBeInTheDocument())
+
+    const editBtns = screen.getAllByText('Edit')
+    fireEvent.click(editBtns[2])
+    await waitFor(() => screen.getByPlaceholderText('Scheme name…'))
+
+    fireEvent.click(screen.getByText('Save'))
+
+    await waitFor(() => {
+      expect(updateColorScheme).toHaveBeenCalledTimes(1)
+      const [, payload] = updateColorScheme.mock.calls[0]
+      expect(payload.theme).not.toBeNull()
+      expect(typeof payload.theme).toBe('object')
+    })
   })
 })
