@@ -302,12 +302,17 @@ export default function ResultsChart({
   // schemeManagerOpen: whether the ColorSchemeManager modal is open
   const [schemeManagerOpen, setSchemeManagerOpen] = useState(false)
 
+  /** The scheme currently in use (selected or default). */
+  const activeScheme = useMemo(
+    () => colorSchemes.find(s => s.id === colorSchemeId) ?? colorSchemes.find(s => s.is_default),
+    [colorSchemes, colorSchemeId],
+  )
+
   /** The active palette: colors from the selected scheme, or the fallback COLORS. */
-  const paletteColors = useMemo(() => {
-    const scheme = colorSchemes.find(s => s.id === colorSchemeId)
-      ?? colorSchemes.find(s => s.is_default)
-    return scheme?.colors ?? COLORS
-  }, [colorSchemes, colorSchemeId])
+  const paletteColors = useMemo(
+    () => activeScheme?.colors ?? COLORS,
+    [activeScheme],
+  )
 
   /** Apply a scheme: set seriesColors for all currently configured fields. */
   const applyScheme = (scheme) => {
@@ -426,10 +431,17 @@ export default function ResultsChart({
     const leftName = axisName(leftFields, fieldMeta)
     const rightName = axisName(rightFields, fieldMeta)
 
-    const axisLabelStyle = { fontSize: 11, formatter: fmtAxisVal }
-    const axisNameStyle = { fontSize: 11, padding: 8 }
+    // Theme colour helpers — undefined means "leave it to the ECharts dark theme"
+    const t = activeScheme?.theme ?? {}
+    const textStyle  = t.textColor ? { color: t.textColor } : {}
+    const gridStyle  = t.gridColor ? { color: t.gridColor } : {}
+    const axisLine   = t.axisColor ? { lineStyle: { color: t.axisColor } } : {}
+
+    const axisLabelStyle = { fontSize: 11, formatter: fmtAxisVal, ...textStyle }
+    const axisNameStyle  = { fontSize: 11, padding: 8, ...textStyle }
 
     return {
+      backgroundColor: t.bg ?? undefined,
       tooltip: {
         trigger: 'axis',
         confine: true,
@@ -438,7 +450,7 @@ export default function ResultsChart({
       legend: {
         show: showLegend,
         data: allSeries.map(s => s.name),
-        textStyle: { fontSize: 11 },
+        textStyle: { fontSize: 11, ...textStyle },
         top: 4,
       },
       toolbox: {
@@ -462,7 +474,8 @@ export default function ResultsChart({
         nameLocation: 'middle',
         nameGap: xLabels.length > 12 ? 50 : 36,
         nameTextStyle: axisNameStyle,
-        axisLabel: { rotate: xLabels.length > 12 ? 30 : 0, fontSize: 11 },
+        axisLabel: { rotate: xLabels.length > 12 ? 30 : 0, fontSize: 11, ...textStyle },
+        axisLine,
         splitLine: { show: false },
       },
       yAxis: [
@@ -476,7 +489,8 @@ export default function ResultsChart({
           nameRotate: 90,
           nameTextStyle: axisNameStyle,
           axisLabel: axisLabelStyle,
-          splitLine: { lineStyle: { type: 'dashed' } },
+          axisLine,
+          splitLine: { lineStyle: { type: 'dashed', ...gridStyle } },
         },
         {
           type: 'value',
@@ -489,18 +503,17 @@ export default function ResultsChart({
           nameRotate: -90,
           nameTextStyle: axisNameStyle,
           axisLabel: axisLabelStyle,
+          axisLine,
           splitLine: { show: false },
         },
       ],
       series: allSeries,
     }
-  }, [hasChart, xField, leftFields, rightFields, leftType, rightType, leftChartData, rightChartData, xLabels, fieldMeta, hasRightAxis, showLegend, leftScaleY, rightScaleY, seriesColors, paletteColors])
+  }, [hasChart, xField, leftFields, rightFields, leftType, rightType, leftChartData, rightChartData, xLabels, fieldMeta, hasRightAxis, showLegend, leftScaleY, rightScaleY, seriesColors, paletteColors, activeScheme])
 
   if (!rows || rows.length === 0) {
     return <div style={{ color: 'var(--color-text-muted)', padding: 16 }}>No results to chart.</div>
   }
-
-  const activeScheme = colorSchemes.find(s => s.id === colorSchemeId) ?? colorSchemes.find(s => s.is_default)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

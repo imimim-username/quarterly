@@ -42,6 +42,21 @@ function SwatchPicker({ color, onChange }) {
   )
 }
 
+/** Sensible starting-point theme values that match the ECharts dark theme. */
+const DARK_THEME_DEFAULTS = {
+  bg:        '#1a1a2e',
+  textColor: '#c0c0c0',
+  gridColor: '#3a3a5a',
+  axisColor: '#5a5a8a',
+}
+
+const THEME_FIELDS = [
+  { key: 'bg',        label: 'Background'    },
+  { key: 'textColor', label: 'Text & labels' },
+  { key: 'gridColor', label: 'Grid lines'    },
+  { key: 'axisColor', label: 'Axis lines'    },
+]
+
 /** Palette editor: ordered list of colors, each with a SwatchPicker. Add / remove colors. */
 function PaletteEditor({ colors, onChange }) {
   const addColor = () => onChange([...colors, '#888888'])
@@ -79,10 +94,15 @@ function PaletteEditor({ colors, onChange }) {
   )
 }
 
-/** Inline editor for a single scheme row (name + colors). */
+/** Inline editor for a single scheme row (name + colors + optional theme). */
 function SchemeEditor({ scheme, onSave, onCancel, saving }) {
   const [name, setName] = useState(scheme?.name || '')
   const [colors, setColors] = useState(scheme?.colors || ['#e94560', '#2196f3', '#4caf50', '#ff9800'])
+  // useTheme: opt-in — true only when the scheme already has a theme, or user enables it
+  const [useTheme, setUseTheme] = useState(scheme?.theme != null)
+  const [theme, setTheme] = useState(scheme?.theme ?? DARK_THEME_DEFAULTS)
+
+  const updateTheme = (key, hex) => setTheme(t => ({ ...t, [key]: hex }))
 
   return (
     <div style={{
@@ -96,15 +116,41 @@ function SchemeEditor({ scheme, onSave, onCancel, saving }) {
         style={{ fontSize: 13, padding: '4px 8px', borderRadius: 4 }}
         autoFocus
       />
+
+      {/* Series colors */}
       <div>
         <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 6 }}>
-          Colors (click a swatch to edit)
+          Series colors (click a swatch to edit)
         </div>
         <PaletteEditor colors={colors} onChange={setColors} />
       </div>
+
+      {/* Chart appearance */}
+      <div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, cursor: 'pointer', userSelect: 'none', color: 'var(--color-text-muted)' }}>
+          <input
+            type="checkbox"
+            checked={useTheme}
+            onChange={e => setUseTheme(e.target.checked)}
+            style={{ cursor: 'pointer' }}
+          />
+          Override chart appearance
+        </label>
+        {useTheme && (
+          <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', marginTop: 8, paddingLeft: 4 }}>
+            {THEME_FIELDS.map(({ key, label }) => (
+              <div key={key} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                <span style={{ fontSize: 10, color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>{label}</span>
+                <SwatchPicker color={theme[key] || '#888888'} onChange={hex => updateTheme(key, hex)} />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div style={{ display: 'flex', gap: 8 }}>
         <button
-          onClick={() => onSave(name.trim(), colors)}
+          onClick={() => onSave(name.trim(), colors, useTheme ? theme : null)}
           disabled={saving || !name.trim() || colors.length === 0}
           style={{ fontSize: 12, padding: '4px 14px' }}
         >
@@ -166,15 +212,15 @@ export default function ColorSchemeManager({ onClose, onSchemesChange }) {
     }
   }
 
-  const handleSave = async (name, colors, id) => {
+  const handleSave = async (name, colors, theme, id) => {
     setActionError('')
     setSaving(true)
     try {
       let result
       if (id === 'new') {
-        result = await createColorScheme({ name, colors })
+        result = await createColorScheme({ name, colors, theme })
       } else {
-        result = await updateColorScheme(id, { name, colors })
+        result = await updateColorScheme(id, { name, colors, theme })
       }
       if (result.ok) {
         setEditingId(null)
@@ -229,7 +275,7 @@ export default function ColorSchemeManager({ onClose, onSchemesChange }) {
                 <SchemeEditor
                   scheme={scheme}
                   saving={saving}
-                  onSave={(name, colors) => handleSave(name, colors, scheme.id)}
+                  onSave={(name, colors, theme) => handleSave(name, colors, theme, scheme.id)}
                   onCancel={() => setEditingId(null)}
                 />
               ) : (
@@ -289,7 +335,7 @@ export default function ColorSchemeManager({ onClose, onSchemesChange }) {
             <SchemeEditor
               scheme={null}
               saving={saving}
-              onSave={(name, colors) => handleSave(name, colors, 'new')}
+              onSave={(name, colors, theme) => handleSave(name, colors, theme, 'new')}
               onCancel={() => setEditingId(null)}
             />
           ) : (
