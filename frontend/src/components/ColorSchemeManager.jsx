@@ -52,6 +52,7 @@ function PaletteEditor({ colors, onChange }) {
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
       {colors.map((c, i) => (
         <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+          <span style={{ fontSize: 10, color: 'var(--color-text-muted)', lineHeight: 1 }}>{i + 1}</span>
           <SwatchPicker color={c} onChange={(hex) => changeColor(i, hex)} />
           {colors.length > 1 && (
             <button
@@ -242,7 +243,7 @@ export default function ColorSchemeManager({ onClose, onSchemesChange }) {
                   {/* Color swatches preview */}
                   <div style={{ display: 'flex', gap: 3, flexShrink: 0 }}>
                     {scheme.colors.slice(0, 8).map((c, i) => (
-                      <div key={i} style={{ width: 14, height: 14, borderRadius: 3, background: c }} />
+                      <div key={i} title={`Series ${i + 1}: ${c}`} style={{ width: 14, height: 14, borderRadius: 3, background: c }} />
                     ))}
                   </div>
                   {/* Name + default badge */}
