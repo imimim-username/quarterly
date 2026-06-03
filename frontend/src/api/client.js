@@ -77,3 +77,11 @@ export const deleteEndpoint  = (id)       => request('DELETE', `/endpoints/${id}
 
 // Report runs list
 export const listReportRuns  = (reportId) => request('GET',    `/reports/${reportId}/runs`);
+
+// Color schemes
+export const listColorSchemes   = ()         => request('GET',    '/color-schemes');
+export const getColorScheme     = (id)       => request('GET',    `/color-schemes/${id}`);
+export const createColorScheme  = (body)     => request('POST',   '/color-schemes', body);
+export const updateColorScheme  = (id, body) => request('PUT',    `/color-schemes/${id}`, body);
+export const deleteColorScheme  = (id)       => request('DELETE', `/color-schemes/${id}`);
+export const setDefaultScheme   = (id)       => request('POST',   `/color-schemes/${id}/set-default`, {});

@@ -15,7 +15,7 @@ import ImportExportModal from './components/ImportExportModal.jsx'
 import QueryPreviewModal from './components/QueryPreviewModal.jsx'
 import EndpointProfilesModal from './components/EndpointProfilesModal.jsx'
 import ReportsPanel from './components/ReportsPanel.jsx'
-import { createRun, listAddressLabels, updateQuery, createQuery, updateSettings, listRuns, getRun } from './api/client.js'
+import { createRun, listAddressLabels, updateQuery, createQuery, updateSettings, listRuns, getRun, listColorSchemes } from './api/client.js'
 import { applyComputedColumns, computedFieldMeta } from './utils/computedColumns.js'
 import { applyTimestampExtraction, timestampExtractionMeta } from './utils/timestampExtraction.js'
 
@@ -64,9 +64,18 @@ export default function App() {
   const [addressLabels, setAddressLabels] = useState([])
   const [prefillGql, setPrefillGql] = useState(null)
   const [now, setNow] = useState(() => Date.now())
+  const [colorSchemes, setColorSchemes] = useState([])
 
   useEffect(() => {
     listAddressLabels().then(({ data }) => { if (data) setAddressLabels(data) })
+  }, [])
+
+  useEffect(() => {
+    listColorSchemes().then(({ data }) => { if (data) setColorSchemes(data) })
+  }, [])
+
+  const handleSchemesChange = useCallback(() => {
+    listColorSchemes().then(({ data }) => { if (data) setColorSchemes(data) })
   }, [])
 
   // Keep `now` ticking so staleness labels stay current without a page refresh
@@ -547,6 +556,8 @@ export default function App() {
                   onSaveView={selectedQuery?.id ? handleSaveChartView : undefined}
                   colDivisors={colDivisors}
                   onDivisorChange={handleDivisorChange}
+                  colorSchemes={colorSchemes}
+                  onSchemesChange={handleSchemesChange}
                 />
               )}
 
@@ -631,7 +642,7 @@ export default function App() {
 /**
  * Inner component for table/chart subtabs.
  */
-function ResultsView({ rows, fieldMeta, keyField, addressLabels = [], chartViews = [], onSaveView, colDivisors = {}, onDivisorChange }) {
+function ResultsView({ rows, fieldMeta, keyField, addressLabels = [], chartViews = [], onSaveView, colDivisors = {}, onDivisorChange, colorSchemes = [], onSchemesChange }) {
   const [view, setView] = useState('table')
 
   return (
@@ -641,7 +652,7 @@ function ResultsView({ rows, fieldMeta, keyField, addressLabels = [], chartViews
         <button className={view === 'chart' ? 'active' : ''} onClick={() => setView('chart')}>Chart</button>
       </div>
       {view === 'table' && <ResultsTable rows={rows} fieldMeta={fieldMeta} keyField={keyField} colDivisors={colDivisors} onDivisorChange={onDivisorChange} addressLabels={addressLabels} />}
-      {view === 'chart' && <ResultsChart rows={rows} fieldMeta={fieldMeta} keyField={keyField} colDivisors={colDivisors} onDivisorChange={onDivisorChange} chartViews={chartViews} onSaveView={onSaveView} />}
+      {view === 'chart' && <ResultsChart rows={rows} fieldMeta={fieldMeta} keyField={keyField} colDivisors={colDivisors} onDivisorChange={onDivisorChange} chartViews={chartViews} onSaveView={onSaveView} colorSchemes={colorSchemes} onSchemesChange={onSchemesChange} />}
     </div>
   )
 }

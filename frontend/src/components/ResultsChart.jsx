@@ -1,5 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react'
 import * as echarts from 'echarts'
+import { Sketch } from '@uiw/react-color'
+import ColorSchemeManager from './ColorSchemeManager.jsx'
 
 /**
  * Minimal ECharts React wrapper — no third-party adapter needed.
@@ -38,7 +40,10 @@ const CHART_TYPES = ['bar', 'line', 'area']
 const GROUP_BY_OPTIONS = ['none', 'day', 'week', 'month']
 const Y_MODE_OPTIONS = ['raw', 'cumulative']
 const AGGREGATION_OPTIONS = ['sum', 'avg', 'median', 'min', 'max', 'count']
+
+/** Fallback palette used when no schemes have been loaded yet. */
 const COLORS = ['#e94560', '#2196f3', '#4caf50', '#ff9800', '#9c27b0', '#00bcd4', '#ff5722', '#607d8b']
+
 const DIVISOR_CYCLE = ['raw', '1e6', '1e18']
 const DIVISOR_LABELS = { raw: 'raw', '1e6': '÷1e6', '1e18': '÷1e18' }
 
@@ -85,8 +90,6 @@ function aggregate(values, method) {
 function buildChartData(rows, xField, allYFields, colDivisors, groupBy, yMode, aggregation = 'sum', xSortDir = 'asc') {
   if (!rows || !xField || allYFields.length === 0) return []
 
-  // Determine the bucket key for each row. When groupBy='none' the key is the
-  // raw x value (so duplicate x values are merged); otherwise it is time-normalised.
   const bucketKey = groupBy === 'none'
     ? row => row[xField]
     : row => bucketTimestamp(row[xField], groupBy)
@@ -108,7 +111,6 @@ function buildChartData(rows, xField, allYFields, colDivisors, groupBy, yMode, a
     return point
   })
 
-  // Sort by x value; numeric when possible, lexicographic otherwise
   data.sort((a, b) => {
     const an = Number(a.x), bn = Number(b.x)
     if (!isNaN(an) && !isNaN(bn)) return an - bn
@@ -136,9 +138,15 @@ function axisName(fields, fieldMeta) {
   return fields.map(f => fieldMeta[f]?.label || f).join(', ')
 }
 
-function makeSeries(fields, colorOffset, yAxisIndex, seriesType, chartData, fieldMeta) {
+/**
+ * Build ECharts series list.
+ * seriesColors: { [fieldName]: hex } — per-field explicit color overrides
+ * paletteColors: string[] — fallback cycle (from the active scheme)
+ */
+function makeSeries(fields, colorOffset, yAxisIndex, seriesType, chartData, fieldMeta, seriesColors, paletteColors) {
   return fields.map((f, i) => {
-    const ci = (colorOffset + i) % COLORS.length
+    const fallbackIdx = (colorOffset + i) % paletteColors.length
+    const color = seriesColors[f] ?? paletteColors[fallbackIdx]
     return {
       name: seriesLabel(f, fieldMeta),
       type: seriesType === 'area' ? 'line' : seriesType,
@@ -146,7 +154,7 @@ function makeSeries(fields, colorOffset, yAxisIndex, seriesType, chartData, fiel
       data: chartData.map(p => p[f] ?? null),
       areaStyle: seriesType === 'area' ? { opacity: 0.25 } : undefined,
       smooth: seriesType !== 'bar',
-      color: COLORS[ci],
+      color,
       lineStyle: { width: 2 },
       symbol: chartData.length > 100 ? 'none' : 'circle',
       symbolSize: 4,
@@ -154,7 +162,19 @@ function makeSeries(fields, colorOffset, yAxisIndex, seriesType, chartData, fiel
   })
 }
 
-function YAxisSelector({ label, fields, setFields, allFields, colorOffset, fieldMeta, seriesType, setSeriesType, yMode, setYMode, showYMode, scaleY, setScaleY, colDivisors, onDivisorChange }) {
+/**
+ * YAxisSelector — picks columns for one axis + their per-series colors.
+ * colorOffset: starting palette index for this axis (0 for left, leftFields.length for right)
+ * seriesColors: { [fieldName]: hex }
+ * paletteColors: string[]
+ * onOpenPicker: (fieldName) => void — called when the colored badge is clicked
+ */
+function YAxisSelector({
+  label, fields, setFields, allFields, colorOffset,
+  fieldMeta, seriesType, setSeriesType, yMode, setYMode, showYMode,
+  scaleY, setScaleY, colDivisors, onDivisorChange,
+  seriesColors, paletteColors, onOpenPicker,
+}) {
   const available = allFields.filter(c => !fields.includes(c))
 
   const add = (col) => { if (col) setFields(prev => [...prev, col]) }
@@ -204,14 +224,20 @@ function YAxisSelector({ label, fields, setFields, allFields, colorOffset, field
       {fields.length > 0 && (
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
           {fields.map((col, i) => {
-            const ci = (colorOffset + i) % COLORS.length
+            const fallbackIdx = (colorOffset + i) % paletteColors.length
+            const color = seriesColors[col] ?? paletteColors[fallbackIdx]
             const divisor = colDivisors?.[col] || 'raw'
             return (
-              <span key={col} style={{
-                display: 'inline-flex', alignItems: 'center', gap: 3,
-                padding: '1px 6px', fontSize: 11, borderRadius: 3,
-                background: COLORS[ci], color: '#fff',
-              }}>
+              <span
+                key={col}
+                title="Click to change color"
+                onClick={() => onOpenPicker(col)}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 3,
+                  padding: '1px 6px', fontSize: 11, borderRadius: 3,
+                  background: color, color: '#fff', cursor: 'pointer',
+                }}
+              >
                 {fieldMeta[col]?.label || col}
                 <button
                   onClick={e => cycleDivisor(col, e)}
@@ -225,7 +251,7 @@ function YAxisSelector({ label, fields, setFields, allFields, colorOffset, field
                   {DIVISOR_LABELS[divisor]}
                 </button>
                 <button
-                  onClick={() => remove(col)}
+                  onClick={e => { e.stopPropagation(); remove(col) }}
                   style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', padding: 0, fontSize: 12, lineHeight: 1 }}
                 >×</button>
               </span>
@@ -238,9 +264,14 @@ function YAxisSelector({ label, fields, setFields, allFields, colorOffset, field
 }
 
 /**
- * ResultsChart — ECharts dual-axis combo chart with group-by and cumulative transforms.
+ * ResultsChart — ECharts dual-axis combo chart with group-by, cumulative
+ * transforms, per-series color picking, and color scheme support.
  */
-export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', colDivisors = {}, onDivisorChange, chartViews = [], onSaveView }) {
+export default function ResultsChart({
+  rows, fieldMeta = {}, keyField = 'id', colDivisors = {}, onDivisorChange,
+  chartViews = [], onSaveView,
+  colorSchemes = [], onSchemesChange,
+}) {
   const [xField, setXField] = useState('')
   const [leftFields, setLeftFields] = useState([])
   const [rightFields, setRightFields] = useState([])
@@ -259,6 +290,42 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
   const [savedMsg, setSavedMsg] = useState('')
   const [saveError, setSaveError] = useState('')
 
+  // Color state
+  // seriesColors: { [fieldName]: hex } — explicit per-field overrides
+  // colorSchemeId: id of the last scheme that was applied (null = using palette defaults)
+  const [seriesColors, setSeriesColors] = useState({})
+  const [colorSchemeId, setColorSchemeId] = useState(null)
+  // pickerField: which field's color is being edited (null = picker closed)
+  const [pickerField, setPickerField] = useState(null)
+  // pickerColor: live value while the picker is open
+  const [pickerColor, setPickerColor] = useState('#e94560')
+  // schemeManagerOpen: whether the ColorSchemeManager modal is open
+  const [schemeManagerOpen, setSchemeManagerOpen] = useState(false)
+
+  /** The active palette: colors from the selected scheme, or the fallback COLORS. */
+  const paletteColors = useMemo(() => {
+    const scheme = colorSchemes.find(s => s.id === colorSchemeId)
+      ?? colorSchemes.find(s => s.is_default)
+    return scheme?.colors ?? COLORS
+  }, [colorSchemes, colorSchemeId])
+
+  /** Apply a scheme: set seriesColors for all currently configured fields. */
+  const applyScheme = (scheme) => {
+    const allFields = [...leftFields, ...rightFields]
+    const newColors = {}
+    allFields.forEach((f, i) => {
+      newColors[f] = scheme.colors[i % scheme.colors.length]
+    })
+    setSeriesColors(newColors)
+    setColorSchemeId(scheme.id)
+  }
+
+  const openPicker = (col) => {
+    const fallbackIdx = [...leftFields, ...rightFields].indexOf(col) % paletteColors.length
+    setPickerColor(seriesColors[col] ?? paletteColors[Math.max(0, fallbackIdx)])
+    setPickerField(col)
+  }
+
   const loadView = (view) => {
     if (!view) return
     setXField(view.xField || '')
@@ -275,6 +342,8 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
     setRightScaleY(view.rightScaleY || false)
     setXSortDir(view.xSortDir || 'asc')
     setShowLegend(view.showLegend !== false)
+    setSeriesColors(view.seriesColors || {})
+    setColorSchemeId(view.colorSchemeId ?? null)
     if (view.colDivisors) onDivisorChange?.(view.colDivisors)
   }
 
@@ -301,6 +370,8 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
         xSortDir,
         showLegend,
         colDivisors,
+        seriesColors,
+        colorSchemeId,
       }
       const ok = await onSaveView?.(view)
       if (ok !== false) {
@@ -329,13 +400,11 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
     [rows, xField, JSON.stringify(rightFields), colDivisors, groupBy, rightYMode, rightAggregation, xSortDir]
   )
 
-  // Use whichever dataset is available for x-axis labels
   const refData = leftChartData.length > 0 ? leftChartData : rightChartData
 
   const xLabels = useMemo(() => refData.map(p => {
     if (isTimestampX || groupBy !== 'none') {
       const d = new Date(Number(p.x) * 1000)
-      // "Jan 5" for day/none, "Jan 2025" for month, "Wk Jan 5" for week
       if (groupBy === 'month') {
         return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
       }
@@ -346,13 +415,12 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
 
   const hasRightAxis = rightFields.length > 0
 
-  // Must be before the early return — hook count must be constant across renders
   const option = useMemo(() => {
     if (!hasChart) return {}
 
     const allSeries = [
-      ...makeSeries(leftFields, 0, 0, leftType, leftChartData, fieldMeta),
-      ...makeSeries(rightFields, leftFields.length, 1, rightType, rightChartData, fieldMeta),
+      ...makeSeries(leftFields, 0, 0, leftType, leftChartData, fieldMeta, seriesColors, paletteColors),
+      ...makeSeries(rightFields, leftFields.length, 1, rightType, rightChartData, fieldMeta, seriesColors, paletteColors),
     ]
 
     const leftName = axisName(leftFields, fieldMeta)
@@ -426,11 +494,13 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
       ],
       series: allSeries,
     }
-  }, [hasChart, xField, leftFields, rightFields, leftType, rightType, leftChartData, rightChartData, xLabels, fieldMeta, hasRightAxis, showLegend, leftScaleY, rightScaleY])
+  }, [hasChart, xField, leftFields, rightFields, leftType, rightType, leftChartData, rightChartData, xLabels, fieldMeta, hasRightAxis, showLegend, leftScaleY, rightScaleY, seriesColors, paletteColors])
 
   if (!rows || rows.length === 0) {
     return <div style={{ color: 'var(--color-text-muted)', padding: 16 }}>No results to chart.</div>
   }
+
+  const activeScheme = colorSchemes.find(s => s.id === colorSchemeId) ?? colorSchemes.find(s => s.is_default)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -464,6 +534,9 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
           setScaleY={setLeftScaleY}
           colDivisors={colDivisors}
           onDivisorChange={onDivisorChange}
+          seriesColors={seriesColors}
+          paletteColors={paletteColors}
+          onOpenPicker={openPicker}
         />
 
         {/* Divider */}
@@ -485,6 +558,9 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
           setScaleY={setRightScaleY}
           colDivisors={colDivisors}
           onDivisorChange={onDivisorChange}
+          seriesColors={seriesColors}
+          paletteColors={paletteColors}
+          onOpenPicker={openPicker}
         />
 
         {isTimestampX && (
@@ -587,6 +663,56 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
         )}
       </div>
 
+      {/* Color scheme controls */}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 11, color: 'var(--color-text-muted)', flexShrink: 0 }}>Colors:</span>
+
+        {/* Scheme selector */}
+        <select
+          value={colorSchemeId ?? ''}
+          onChange={e => setColorSchemeId(e.target.value ? Number(e.target.value) : null)}
+          style={{ fontSize: 11, padding: '2px 4px' }}
+          title="Select a color scheme to apply"
+        >
+          <option value="">Custom</option>
+          {colorSchemes.map(s => (
+            <option key={s.id} value={s.id}>
+              {s.name}{s.is_default ? ' (default)' : ''}
+            </option>
+          ))}
+        </select>
+
+        {/* Apply scheme */}
+        <button
+          onClick={() => { if (activeScheme) applyScheme(activeScheme) }}
+          disabled={!activeScheme}
+          style={{ fontSize: 11, padding: '2px 8px' }}
+          title="Apply this scheme's colors to the current series"
+        >
+          Apply
+        </button>
+
+        {/* Reset to palette defaults */}
+        <button
+          onClick={() => setSeriesColors({})}
+          style={{ fontSize: 11, padding: '2px 8px', background: 'transparent' }}
+          title="Clear all per-series color overrides"
+        >
+          Reset colors
+        </button>
+
+        <div style={{ width: 1, background: 'var(--color-border)', alignSelf: 'stretch', margin: '0 2px' }} />
+
+        {/* Manage schemes */}
+        <button
+          onClick={() => setSchemeManagerOpen(true)}
+          style={{ fontSize: 11, padding: '2px 8px' }}
+          title="Open the color scheme manager"
+        >
+          ⚙ Manage Schemes
+        </button>
+      </div>
+
       {saveError && (
         <div className="error-banner" style={{ fontSize: 12 }}>{saveError}</div>
       )}
@@ -598,6 +724,71 @@ export default function ResultsChart({ rows, fieldMeta = {}, keyField = 'id', co
         <div style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>
           Select X and at least one Y field to render chart.
         </div>
+      )}
+
+      {/* Per-series color picker modal */}
+      {pickerField && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 300,
+            background: 'rgba(0,0,0,0.5)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+          onClick={() => {
+            // Commit the current picker color when closing via backdrop
+            setSeriesColors(prev => ({ ...prev, [pickerField]: pickerColor }))
+            setColorSchemeId(null) // mark as custom
+            setPickerField(null)
+          }}
+        >
+          <div
+            style={{
+              background: 'var(--color-bg)', border: '1px solid var(--color-border)',
+              borderRadius: 8, padding: 16,
+              boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+              display: 'flex', flexDirection: 'column', gap: 12,
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+              Color for: <strong style={{ color: 'var(--color-text)' }}>{fieldMeta[pickerField]?.label || pickerField}</strong>
+            </div>
+            {/* Force light color-scheme so the Sketch picker renders correctly */}
+            <div style={{ colorScheme: 'light' }}>
+              <Sketch
+                color={pickerColor}
+                onChange={(c) => setPickerColor(c.hex)}
+                style={{ boxShadow: 'none' }}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setPickerField(null)}
+                style={{ fontSize: 12, padding: '4px 12px', background: 'transparent' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setSeriesColors(prev => ({ ...prev, [pickerField]: pickerColor }))
+                  setColorSchemeId(null) // mark as custom since user overrode a color
+                  setPickerField(null)
+                }}
+                style={{ fontSize: 12, padding: '4px 14px' }}
+              >
+                Apply
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Color scheme manager modal */}
+      {schemeManagerOpen && (
+        <ColorSchemeManager
+          onClose={() => setSchemeManagerOpen(false)}
+          onSchemesChange={() => { onSchemesChange?.(); setSchemeManagerOpen(false) }}
+        />
       )}
     </div>
   )
