@@ -8,7 +8,15 @@ module.exports = function colorSchemesRoutes(db) {
   /** Parse a DB row — deserialise the colors JSON array and coerce is_default to boolean. */
   function parse(row) {
     if (!row) return null;
-    return { ...row, colors: JSON.parse(row.colors), is_default: row.is_default === 1 };
+    let colors;
+    try { colors = JSON.parse(row.colors) } catch { colors = [] }
+    if (!Array.isArray(colors)) colors = [];
+    return { ...row, colors, is_default: row.is_default === 1 };
+  }
+
+  /** Return true if value is a valid CSS hex color (#rgb or #rrggbb). */
+  function isValidHex(v) {
+    return typeof v === 'string' && /^#[0-9A-Fa-f]{6}$|^#[0-9A-Fa-f]{3}$/.test(v);
   }
 
   // GET /api/color-schemes — list all
@@ -30,8 +38,17 @@ module.exports = function colorSchemesRoutes(db) {
     if (!name || !name.trim()) {
       return res.status(400).json({ error: 'invalid', message: 'name is required' });
     }
+    if (name.trim().length > 255) {
+      return res.status(400).json({ error: 'invalid', message: 'name must be 255 characters or fewer' });
+    }
     if (!Array.isArray(colors) || colors.length === 0) {
       return res.status(400).json({ error: 'invalid', message: 'colors must be a non-empty array' });
+    }
+    if (colors.length > 100) {
+      return res.status(400).json({ error: 'invalid', message: 'colors array must have 100 entries or fewer' });
+    }
+    if (!colors.every(isValidHex)) {
+      return res.status(400).json({ error: 'invalid', message: 'each color must be a valid hex string (#rgb or #rrggbb)' });
     }
     const now = new Date().toISOString();
     try {
@@ -55,10 +72,19 @@ module.exports = function colorSchemesRoutes(db) {
 
     const { name, colors } = req.body || {};
     const newName = (name !== undefined ? name.trim() : existing.name);
-    const newColors = Array.isArray(colors) ? colors : JSON.parse(existing.colors);
+    let newColors;
+    if (Array.isArray(colors)) {
+      newColors = colors;
+    } else {
+      try { newColors = JSON.parse(existing.colors) } catch { newColors = [] }
+      if (!Array.isArray(newColors)) newColors = [];
+    }
 
     if (!newName) return res.status(400).json({ error: 'invalid', message: 'name cannot be empty' });
+    if (newName.length > 255) return res.status(400).json({ error: 'invalid', message: 'name must be 255 characters or fewer' });
     if (newColors.length === 0) return res.status(400).json({ error: 'invalid', message: 'colors cannot be empty' });
+    if (newColors.length > 100) return res.status(400).json({ error: 'invalid', message: 'colors array must have 100 entries or fewer' });
+    if (!newColors.every(isValidHex)) return res.status(400).json({ error: 'invalid', message: 'each color must be a valid hex string (#rgb or #rrggbb)' });
 
     const now = new Date().toISOString();
     try {

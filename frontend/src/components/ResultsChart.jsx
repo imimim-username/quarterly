@@ -656,7 +656,7 @@ export default function ResultsChart({
             )}
             {savedMsg && (
               <span style={{ fontSize: 11, color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>
-                ✓ {savedMsg}
+                {savedMsg}
               </span>
             )}
           </>
@@ -735,9 +735,7 @@ export default function ResultsChart({
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}
           onClick={() => {
-            // Commit the current picker color when closing via backdrop
-            setSeriesColors(prev => ({ ...prev, [pickerField]: pickerColor }))
-            setColorSchemeId(null) // mark as custom
+            // Backdrop click = cancel (discard changes, same as Cancel button)
             setPickerField(null)
           }}
         >

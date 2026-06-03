@@ -182,6 +182,54 @@ if (nativeAvailable) {
       db.close();
     });
 
+    test('rejects name longer than 255 chars with 400', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const res = await request(app).post('/api/color-schemes').send({
+        name: 'a'.repeat(256),
+        colors: ['#ff0000'],
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('invalid');
+      db.close();
+    });
+
+    test('rejects colors array with more than 100 entries with 400', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const res = await request(app).post('/api/color-schemes').send({
+        name: 'TooMany',
+        colors: Array.from({ length: 101 }, () => '#ff0000'),
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('invalid');
+      db.close();
+    });
+
+    test('rejects invalid (non-hex) color values with 400', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const res = await request(app).post('/api/color-schemes').send({
+        name: 'BadColor',
+        colors: ['#ff0000', 'red', 'rgb(0,0,0)'],
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('invalid');
+      db.close();
+    });
+
+    test('accepts 3-char shorthand hex colors (#rgb)', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const res = await request(app).post('/api/color-schemes').send({
+        name: 'ShortHex',
+        colors: ['#f00', '#0f0', '#00f'],
+      });
+      expect(res.status).toBe(201);
+      expect(res.body.colors).toEqual(['#f00', '#0f0', '#00f']);
+      db.close();
+    });
+
     test('returns 409 for duplicate name', async () => {
       const db = makeDb();
       const app = makeApp(db);
@@ -254,6 +302,30 @@ if (nativeAvailable) {
       });
       expect(res.status).toBe(404);
       expect(res.body.error).toBe('not_found');
+      db.close();
+    });
+
+    test('rejects invalid hex color values in PUT with 400', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const id = seedScheme(db, 'ValidScheme', ['#aabbcc']);
+      const res = await request(app).put(`/api/color-schemes/${id}`).send({
+        colors: ['not-a-color'],
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('invalid');
+      db.close();
+    });
+
+    test('rejects name > 255 chars in PUT with 400', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const id = seedScheme(db, 'Short', ['#aabbcc']);
+      const res = await request(app).put(`/api/color-schemes/${id}`).send({
+        name: 'x'.repeat(256),
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('invalid');
       db.close();
     });
 
@@ -377,13 +449,19 @@ if (nativeAvailable) {
     test.skip('POST / creates a scheme (skipped)', () => {});
     test.skip('POST / rejects missing name (skipped)', () => {});
     test.skip('POST / rejects blank name (skipped)', () => {});
+    test.skip('POST / rejects name > 255 chars (skipped)', () => {});
     test.skip('POST / rejects missing colors (skipped)', () => {});
     test.skip('POST / rejects empty colors (skipped)', () => {});
+    test.skip('POST / rejects colors array > 100 entries (skipped)', () => {});
+    test.skip('POST / rejects non-hex color values (skipped)', () => {});
+    test.skip('POST / accepts #rgb shorthand hex (skipped)', () => {});
     test.skip('POST / returns 409 for duplicate name (skipped)', () => {});
     test.skip('PUT /:id updates name and colors (skipped)', () => {});
     test.skip('PUT /:id partial update keeps existing name (skipped)', () => {});
     test.skip('PUT /:id partial update keeps existing colors (skipped)', () => {});
     test.skip('PUT /:id returns 404 for missing id (skipped)', () => {});
+    test.skip('PUT /:id rejects invalid hex in colors (skipped)', () => {});
+    test.skip('PUT /:id rejects name > 255 chars (skipped)', () => {});
     test.skip('PUT /:id returns 409 for name conflict (skipped)', () => {});
     test.skip('DELETE /:id removes non-default scheme (skipped)', () => {});
     test.skip('DELETE /:id returns 400 for default scheme (skipped)', () => {});
