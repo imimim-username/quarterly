@@ -52,7 +52,7 @@ function PaletteEditor({ colors, onChange }) {
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
       {colors.map((c, i) => (
         <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-          <span style={{ fontSize: 10, color: 'var(--color-text-muted)', lineHeight: 1 }}>{i + 1}</span>
+          <span style={{ fontSize: 10, color: 'var(--color-text-muted)', lineHeight: 1, whiteSpace: 'nowrap' }}>Series {i + 1}</span>
           <SwatchPicker color={c} onChange={(hex) => changeColor(i, hex)} />
           {colors.length > 1 && (
             <button
