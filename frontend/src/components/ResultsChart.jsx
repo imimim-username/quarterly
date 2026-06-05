@@ -134,8 +134,9 @@ function seriesLabel(field, fieldMeta) {
   return fieldMeta[field]?.label || field
 }
 
-function axisName(fields, fieldMeta) {
-  return fields.map(f => fieldMeta[f]?.label || f).join(', ')
+function axisName(fields, fieldMeta, yMode) {
+  const name = fields.map(f => fieldMeta[f]?.label || f).join(', ')
+  return yMode === 'cumulative' ? `cumulative ${name}` : name
 }
 
 /**
@@ -428,8 +429,8 @@ export default function ResultsChart({
       ...makeSeries(rightFields, leftFields.length, 1, rightType, rightChartData, fieldMeta, seriesColors, paletteColors),
     ]
 
-    const leftName = axisName(leftFields, fieldMeta)
-    const rightName = axisName(rightFields, fieldMeta)
+    const leftName = axisName(leftFields, fieldMeta, leftYMode)
+    const rightName = axisName(rightFields, fieldMeta, rightYMode)
 
     // Theme colour helpers — undefined means "leave it to the ECharts dark theme"
     const t = activeScheme?.theme ?? {}

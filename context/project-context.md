@@ -21,6 +21,7 @@ This document is the authoritative technical reference for the **quarterly** pro
 13. [Testing](#13-testing)
 14. [CSS / Theme Variables](#14-css--theme-variables)
 15. [Deployment Notes](#15-deployment-notes)
+16. [Future / Maybe](#16-future--maybe)
 
 ---
 
@@ -72,6 +73,7 @@ quarterly/                          npm workspace root
 │   │       ├── introspect.js
 │   │       ├── proxy.js
 │   │       ├── addressLabels.js
+│   │       ├── colorSchemes.js
 │   │       ├── transfer.js
 │   │       └── endpoints.js
 │   ├── data/
@@ -83,6 +85,7 @@ quarterly/                          npm workspace root
 │       ├── queries.test.js
 │       ├── runs.test.js
 │       ├── settings.test.js
+│       ├── colorSchemes.test.js
 │       └── endpoints.test.js
 ├── frontend/
 │   ├── package.json                name: quarterly-frontend, version: 1.0.0
@@ -100,8 +103,8 @@ quarterly/                          npm workspace root
 │       │   └── __tests__/
 │       │       ├── computedColumns.test.js   (115 tests)
 │       │       └── timestampExtraction.test.js  (25 tests)
-│       └── components/             21 components (see §10)
-│           ├── __tests__/          9 Vitest test files
+│       └── components/             23 components (see §10)
+│           ├── __tests__/          11 Vitest test files
 │           └── ...
 └── queries/
     └── builtin/
@@ -143,7 +146,8 @@ quarterly/                          npm workspace root
 | @graphiql/plugin-explorer | 3.2.3 | field explorer plugin |
 | react-datepicker | 7.6.0 | date pickers |
 | expr-eval | 2.0.2 | safe arithmetic expression parser used internally (no eval/Function) — note: computed columns now use a custom built-in parser instead |
-| Vitest | 3.1.4 | frontend test runner |
+| @uiw/react-color | (pinned) | Sketch color picker for color scheme editor |
+| Vitest | 4.1.8 | frontend test runner (upgraded from 3 to fix CVE-2026-47429) |
 | @testing-library/react | 16.3.0 | component test helpers |
 | @testing-library/jest-dom | 6.6.3 | DOM matchers |
 
@@ -352,6 +356,29 @@ CREATE TABLE endpoints (
 );
 ```
 
+### `color_schemes`
+```sql
+CREATE TABLE color_schemes (
+  id         INTEGER PRIMARY KEY,
+  name       TEXT    NOT NULL,
+  colors     TEXT    NOT NULL,               -- JSON array of hex strings
+  theme      TEXT    DEFAULT NULL,           -- JSON object or NULL (added migration 008)
+  is_default INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT    NOT NULL,
+  updated_at TEXT    NOT NULL
+);
+```
+
+**`colors`** — JSON array of hex color strings, e.g. `["#e94560","#2196f3","#4caf50","#ff9800"]`. Minimum 1, maximum 20 colors. Each must match `/^#[0-9a-fA-F]{6}$/`.
+
+**`theme`** — optional JSON object for overriding chart chrome colors. When NULL, ECharts uses its built-in dark defaults. When set, has exactly these keys:
+```json
+{ "bg": "#1a1a2e", "textColor": "#c0c0c0", "gridColor": "#3a3a5a", "axisColor": "#5a5a8a" }
+```
+All four keys are optional within the object; any that are present must be valid 6-digit hex. The allowed keys are `bg`, `textColor`, `gridColor`, `axisColor`.
+
+**`is_default`** — at most one row has `is_default = 1`. Enforced by clearing all rows before setting a new default. Built-in seeded schemes: Default, Warm, Cool, Pastel.
+
 ### `schema_version`
 ```sql
 CREATE TABLE schema_version (
@@ -384,8 +411,10 @@ Used by the migration runner. Tracks the highest applied migration number.
 | `004_endpoints_and_run_notes.js` | 4 | `endpoints` table + `runs.notes` column |
 | `005_computed_columns.js` | 5 | `ALTER queries ADD COLUMN computed_columns` |
 | `006_timestamp_extraction.js` | 6 | `ALTER queries ADD COLUMN timestamp_extraction` |
+| `007_color_schemes.js` | 7 | `color_schemes` table + seed built-in schemes (Default, Warm, Cool, Pastel) |
+| `008_color_scheme_theme.js` | 8 | `ALTER color_schemes ADD COLUMN theme TEXT DEFAULT NULL` |
 
-**Adding a migration:** create `backend/src/migrations/007_my_change.js` with `module.exports = { up(db) { db.exec('...') } }`. It runs automatically on next server start.
+**Adding a migration:** create `backend/src/migrations/009_my_change.js` with `module.exports = { up(db) { db.exec('...') } }`. It runs automatically on next server start.
 
 ---
 
@@ -636,6 +665,33 @@ Returns 204.
 
 ---
 
+### `GET /api/color-schemes`
+Returns all color schemes. `colors` and `theme` fields are JSON-parsed before returning. Returns `{ data: [...] }`. Schemes are ordered by `id`.
+
+### `POST /api/color-schemes`
+Body: `{ name, colors, theme? }`.
+- `name` required, max 100 chars
+- `colors` must be a JSON array of 1–20 valid 6-digit hex strings (e.g. `"#4caf50"`)
+- `theme` optional; if present and non-null, must be an object with only allowed keys (`bg`, `textColor`, `gridColor`, `axisColor`), each a valid 6-digit hex string. Null explicitly stored as NULL.
+
+Returns `{ data: newScheme }` (201). 400 on validation error.
+
+### `PUT /api/color-schemes/:id`
+Same body as POST. `theme` handling:
+- If `theme` is explicitly `null` in the body → clears existing theme (stores NULL)
+- If `theme` is omitted from the body entirely → preserves existing theme
+- If `theme` is an object → validates and stores
+
+Returns `{ data: updatedScheme }`. 404 if not found.
+
+### `DELETE /api/color-schemes/:id`
+Returns 204. 404 if not found. Cannot delete the default scheme (400 `cannot_delete_default`).
+
+### `POST /api/color-schemes/:id/set-default`
+Clears `is_default` on all rows, then sets it on the specified row. Returns `{ ok: true }`. 404 if not found.
+
+---
+
 ### `POST /api/transfer/export`
 
 Body:
@@ -791,6 +847,8 @@ function formatAge(ranAt, now) {
 | `schemaExplorerOpen` | `bool` | Schema Explorer modal |
 | `addressBookOpen` | `bool` | Address Book modal |
 | `importExportOpen` | `bool` | Import/Export modal |
+| `colorSchemes` | `array` | All color schemes, loaded on mount via `listColorSchemes()` |
+| `colorSchemeId` | `number \| null` | ID of the user-selected color scheme (null = use default) |
 | `queryPreviewOpen` | `bool` | Query Preview modal |
 | `endpointProfilesOpen` | `bool` | Endpoint Profiles modal |
 | `endpointVersion` | `number` | Incremented to force EndpointBar remount (re-reads endpoint from server) |
@@ -867,13 +925,11 @@ All modals are rendered at the App level and conditionally included:
 - `QueryPreviewModal` — receives `currentRun` to display request details
 - `HistoryDrawer` — always rendered (controls open/close via `open` prop)
 
-### `ResultsView` (inner component)
+### `ResultsView`
 
-```jsx
-function ResultsView({ rows, fieldMeta, keyField, addressLabels, chartViews, onSaveView, colDivisors, onDivisorChange })
-```
+Extracted as a separate component file (`frontend/src/components/ResultsView.jsx`). See §10 for the full contract.
 
-Manages a local `view` state (`'table'` | `'chart'`). Renders either `<ResultsTable>` or `<ResultsChart>`.
+Manages a local `view` state (`'table'` | `'chart'`). Uses `display:none` toggling (not conditional rendering) to keep both `ResultsTable` and `ResultsChart` mounted simultaneously — this preserves chart ECharts instance state across tab switches.
 
 ---
 
@@ -1022,6 +1078,29 @@ Internal state: `sortCol`, `sortDir`, `copiedAddr`, `searchText`, `hiddenCols`, 
 
 ---
 
+### `ResultsView`
+
+```jsx
+<ResultsView
+  rows={array}               // computed rows (post-pipeline)
+  fieldMeta={object}
+  keyField={string}
+  addressLabels={array}
+  chartViews={array}
+  onSaveView={fn}
+  colDivisors={object}
+  onDivisorChange={fn}
+  colorSchemes={array}       // all available color schemes (from App state)
+  colorSchemeId={number|null}
+  onColorSchemeChange={fn}   // called with new scheme id
+  onSchemesChange={fn}       // called after ColorSchemeManager modifies schemes
+/>
+```
+
+Manages local `view` state (`'table'` | `'chart'`). Renders both `<ResultsTable>` and `<ResultsChart>` always in the DOM, toggling visibility with `display:none` so the ECharts instance stays mounted across Table↔Chart tab switches. "⚙ Schemes" button in the chart toolbar opens `<ColorSchemeManager>` as an overlay.
+
+---
+
 ### `ResultsChart`
 
 ```jsx
@@ -1033,10 +1112,34 @@ Internal state: `sortCol`, `sortDir`, `copiedAddr`, `searchText`, `hiddenCols`, 
   onDivisorChange={fn}
   chartViews={array}         // saved named views
   onSaveView={fn}            // async fn(view) → bool
+  colorSchemes={array}       // all color scheme objects
+  colorSchemeId={number|null}
+  onColorSchemeChange={fn}   // called with new scheme id when user picks from dropdown
+  onSchemesChange={fn}       // called after ColorSchemeManager modifies schemes list
 />
 ```
 
 Manages chart config: `xField`, `leftCols`, `rightCols`, `chartType`, `groupBy`, `leftCumulative`, `rightCumulative`, `leftAggregation`, `rightAggregation`, `leftScaleY`, `rightScaleY`, `xSortDir`, `showLegend`. Renders ECharts instance via `echarts.init`. Supports PNG download via `chart.getDataURL()`.
+
+**Color scheme integration:**
+
+```js
+const activeScheme = useMemo(
+  () => colorSchemes.find(s => s.id === colorSchemeId) ?? colorSchemes.find(s => s.is_default),
+  [colorSchemes, colorSchemeId],
+)
+```
+
+`paletteColors` (useMemo) is derived from `activeScheme?.colors ?? []`.
+
+The `option` useMemo applies `activeScheme?.theme` to ECharts:
+- `backgroundColor: t.bg ?? undefined`
+- xAxis and both yAxis `axisLabel.color`, `nameTextStyle.color` → `t.textColor`
+- Both yAxis `splitLine.lineStyle.color` → `t.gridColor`
+- Both xAxis/yAxis `axisLine.lineStyle.color` → `t.axisColor`
+- `legend.textStyle.color` → `t.textColor`
+
+When `theme` is null or a key is absent, the corresponding ECharts property is `undefined`, falling through to the dark theme defaults.
 
 **`isTimestampX`:** `xField === 'timestamp' || colDivisors[xField] === 'datetime'`. Controls visibility of the Group By selector, aggregation dropdowns, and x-axis sort control. When `isTimestampX` is false, these controls are hidden.
 
@@ -1049,6 +1152,32 @@ Manages chart config: `xField`, `leftCols`, `rightCols`, `chartType`, `groupBy`,
 **`buildChartData` refactor:** Uses a unified Map-group-then-aggregate pattern for all `groupBy` modes (including `'none'`). Collects values into arrays per `(bucket, field)`, then applies `aggregate(values, method)` to produce a single point value. The same `aggregate()` helper is used for all aggregation modes; `null` is returned for empty arrays, `Infinity`/`NaN`, and non-finite results (e.g., division by zero).
 
 **Saved chart view fields:** `xField`, `leftCols`, `rightCols`, `chartType`, `groupBy`, `leftCumulative`, `rightCumulative`, `leftAggregation`, `rightAggregation`, `leftScaleY`, `rightScaleY`, `xSortDir`, `showLegend`.
+
+---
+
+### `ColorSchemeManager`
+
+```jsx
+<ColorSchemeManager
+  onClose={fn}
+  onSchemesChange={fn}       // called after any create/update/delete/set-default
+/>
+```
+
+Full-screen modal (fixed overlay, backdrop click closes). Fetches all schemes on open via `listColorSchemes()`.
+
+**List view:** each scheme row shows up to 8 color swatches (14×14 px each with hover tooltip `"Series N: #rrggbb"`), the scheme name (bold if default), a `default` badge, and action buttons: "Set default" (hidden for current default), "Edit", "Delete" (hidden for current default).
+
+**`SchemeEditor`** (inline, replaces the list row when editing): contains:
+- Name text input
+- `PaletteEditor` — ordered swatches with Series 1/2/3… labels above each, × remove buttons, + add button. Each swatch opens an inline `@uiw/react-color` Sketch picker on click; picker closes on outside click.
+- "Override chart appearance" checkbox (opt-in, unchecked by default for new schemes and for schemes with `theme: null`; pre-checked when scheme already has a theme)
+- When checked: 4 `SwatchPicker` controls for Background, Text & labels, Grid lines, Axis lines — using `DARK_THEME_DEFAULTS` as initial values when newly enabling
+- Save / Cancel buttons
+
+`onSave(name, colors, useTheme ? theme : null)` — passes `null` for theme when checkbox unchecked.
+
+**Validation:** name required, at least 1 color, all colors must be valid hex (enforced by the backend).
 
 ---
 
@@ -1287,6 +1416,13 @@ createAddressLabel(body)
 updateAddressLabel(id, body)
 deleteAddressLabel(id)
 
+// Color schemes
+listColorSchemes()
+createColorScheme(body)           // { name, colors, theme? }
+updateColorScheme(id, body)       // { name, colors, theme? }
+deleteColorScheme(id)
+setDefaultScheme(id)              // POST /api/color-schemes/:id/set-default
+
 // Introspect
 introspect(endpoint?)
 
@@ -1458,18 +1594,27 @@ Config: `jest` in `backend/package.json`, `--runInBand` (sequential — avoids S
 
 **`queries.test.js` adds `computed_columns TEXT NOT NULL DEFAULT '[]'` and `timestamp_extraction TEXT` to its `makeDb()` schema** for the same reason (migrations 005 and 006).
 
+**`colorSchemes.test.js`** (46 tests) — `makeDb()` includes `color_schemes` schema with `theme TEXT DEFAULT NULL`; `seedScheme(db, name, colors, isDefault, theme)` helper; `VALID_THEME` constant. Covers:
+- GET: returns all schemes with parsed JSON; null theme stays null; theme object returned parsed
+- POST: valid scheme (no theme, theme:null, full theme, partial theme); array → 400; string → 400; unknown key → 400; bad hex → 400; null individual value valid
+- PUT: updates name/colors/theme; `theme:null` clears; omitting theme preserves; unknown key → 400; bad hex → 400
+- DELETE: normal delete; cannot delete default (400); 404 not found
+- POST `/set-default`: sets default, clears others; 404 not found
+
 ### Frontend (Vitest)
 
 Run: `npm test --workspace=frontend`
 
 Config: `vitest.config.js` with `environment: 'jsdom'`, `setupFiles: ['@testing-library/jest-dom/vitest']`.
 
-**11 test files, 207+ tests total:**
+**11 test files, 195 tests total:**
 
 | File | Tests | Coverage |
 |---|---|---|
 | `components/__tests__/ResultsTable.test.jsx` | ~25 | Column rendering, sorting, divisors, address resolution, copy formats, virtualisation toggle |
 | `components/__tests__/ComputedColumnsEditor.test.jsx` | 12 | Empty state, existing defs, edit flow, delete, add (success/validation errors/cancel), reorder |
+| `components/__tests__/ColorSchemeManager.test.jsx` | 32 | List rendering (swatches, default badge), set default, delete, create, edit (name/colors/theme), "Override chart appearance" checkbox behavior (opt-in, pre-checked for themed schemes, hides/shows pickers), save with and without theme, update scheme with and without theme |
+| `components/__tests__/ResultsView.test.jsx` | 22 | Renders table by default, chart tab switch (Chart button), `display:none` toggling (both children always mounted), props flow through (divisors, filters, save view), color scheme props forwarded to ResultsChart |
 | `utils/__tests__/computedColumns.test.js` | 115 | `parseFormula` (valid/invalid/empty), `applyComputedColumns` (no defs, arithmetic, divisors, zero, chaining, invalid formula, div-by-zero, prototype blocking), `computedFieldMeta`, custom parser operators |
 | `utils/__tests__/timestampExtraction.test.js` | 25 | `applyTimestampExtraction` (null config, before/after position, missing field, delimiter variants), `timestampExtractionMeta` |
 | `components/__tests__/EndpointBar.test.jsx` | ~5 | URL save, ping, explore button visibility |
@@ -1478,6 +1623,8 @@ Config: `vitest.config.js` with `environment: 'jsdom'`, `setupFiles: ['@testing-
 | `components/__tests__/QueryPreviewModal.test.jsx` | ~4 | Code snippet tabs, copy button |
 | `components/__tests__/SchemaExplorer.test.jsx` | ~4 | GraphiQL embed, "Use This Query" button |
 | `components/__tests__/EndpointProfilesModal.test.jsx` | ~4 | Profile list, create, select, delete |
+
+**Grand total: 241 tests (195 frontend Vitest, 46 backend Jest)**
 
 **Mocking pattern:**
 - `vi.mock('../../api/client.js', () => ({ fn: vi.fn() }))` — mock BEFORE import
@@ -1547,3 +1694,15 @@ CSS class patterns used:
 **The database file** is at `backend/data/quarterly.db`. Back this up to preserve query definitions, run history, and address labels.
 
 **Not suitable for multi-user / internet-exposed deployment** without additional auth, rate limiting, and network hardening. The SSRF protections are present but the tool is designed for single-user localhost use.
+
+---
+
+## 16. Future / Maybe
+
+Ideas that have been raised but explicitly deferred. Do not implement without checking with the user first.
+
+### Font family picker for chart labels
+
+ECharts supports `fontFamily` in any text style object (`axisLabel`, `nameTextStyle`, `legend.textStyle`, etc.). The idea would be to add `fontFamily` as a sixth key in the color scheme `theme` object, with a `<select>` in `SchemeEditor` offering a curated list of web-safe fonts (system-ui, Arial, Roboto, Segoe UI, Georgia, Consolas). No Google Fonts loading needed for the curated set.
+
+**Status as of 2026-06-03:** User said "not right now, I'm not convinced we need this." Revisit only if explicitly requested.
