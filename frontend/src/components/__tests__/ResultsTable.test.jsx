@@ -90,13 +90,14 @@ describe('ResultsTable', () => {
     // Pick the "amount" column
     fireEvent.change(picker, { target: { value: 'amount' } })
 
-    // sum=600, avg=200, min=100, max=300 — all appear in the stats line
+    // sum=600, avg=200, min=100, max=300, σ≈81.65 — all appear in the stats line
     // Σ Stats text is rendered together in a sibling div
     const statsText = picker.parentElement.textContent
     expect(statsText).toMatch(/Σ/)
     expect(statsText).toMatch(/avg/)
     expect(statsText).toMatch(/min/)
     expect(statsText).toMatch(/max/)
+    expect(statsText).toMatch(/σ/)
   })
 
   it('Copy ▾ menu appears when clicked; "Markdown" copies markdown table format', async () => {

@@ -166,7 +166,9 @@ export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id', co
     const mean = sum / nums.length
     const min = Math.min(...nums)
     const max = Math.max(...nums)
-    return { sum, mean, min, max }
+    const variance = nums.reduce((a, b) => a + (b - mean) ** 2, 0) / nums.length
+    const stddev = Math.sqrt(variance)
+    return { sum, mean, min, max, stddev }
   }, [displayRows, statsCol, statCandidateCols, colDivisors])
 
   const handleSort = (col) => {
@@ -503,7 +505,7 @@ export default function ResultsTable({ rows, fieldMeta = {}, keyField = 'id', co
           </select>
           {statsResult && statsCol && (
             <div style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-text)' }}>
-              Σ {fmtNum(statsResult.sum)} · avg {fmtNum(statsResult.mean)} · min {fmtNum(statsResult.min)} · max {fmtNum(statsResult.max)}
+              Σ {fmtNum(statsResult.sum)} · avg {fmtNum(statsResult.mean)} · min {fmtNum(statsResult.min)} · max {fmtNum(statsResult.max)} · σ {fmtNum(statsResult.stddev)}
               {colDivisors[statsCol] && colDivisors[statsCol] !== 'raw' && (
                 <span style={{ color: 'var(--color-text-muted)', marginLeft: 4 }}>({colDivisors[statsCol]})</span>
               )}
