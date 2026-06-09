@@ -63,7 +63,9 @@ quarterly/                          npm workspace root
 │   │   │   ├── 003_chart_views.js  ALTER queries ADD COLUMN chart_views
 │   │   │   ├── 004_endpoints_and_run_notes.js  endpoints table + runs.notes column
 │   │   │   ├── 005_computed_columns.js  ALTER queries ADD COLUMN computed_columns
-│   │   │   └── 006_timestamp_extraction.js  ALTER queries ADD COLUMN timestamp_extraction
+│   │   │   ├── 006_timestamp_extraction.js  ALTER queries ADD COLUMN timestamp_extraction
+│   │   │   ├── 007_color_schemes.js  color_schemes table + seed Default/Warm/Cool/Pastel
+│   │   │   └── 008_color_scheme_theme.js  ALTER color_schemes ADD COLUMN theme
 │   │   └── routes/
 │   │       ├── settings.js
 │   │       ├── queries.js
@@ -103,8 +105,8 @@ quarterly/                          npm workspace root
 │       │   └── __tests__/
 │       │       ├── computedColumns.test.js   (115 tests)
 │       │       └── timestampExtraction.test.js  (25 tests)
-│       └── components/             23 components (see §10)
-│           ├── __tests__/          11 Vitest test files
+│       └── components/             24 components (see §10)
+│           ├── __tests__/          12 Vitest test files
 │           └── ...
 └── queries/
     └── builtin/
@@ -1068,7 +1070,7 @@ Internal state: `sortCol`, `sortDir`, `copiedAddr`, `searchText`, `hiddenCols`, 
 
 **Divisor cycle:** `DIVISOR_CYCLE = ['raw', '1e6', '1e18']`. Clicking a column's badge cycles forward. `onDivisorChange` is called with the full updated divisors object — `App` persists to `field_meta.decimals`.
 
-**Stats bar:** `statCandidateCols` = visible numeric columns (excludes unix_seconds/unix_ms typed, excludes `timestamp` column name). `statsResult` uses `applyDivisor()` when a divisor is active (BigInt-safe). Picker is a `<select>`; no column selected → no stats shown.
+**Stats bar:** `statCandidateCols` = visible numeric columns (excludes unix_seconds/unix_ms typed, excludes `timestamp` column name). `statsResult` uses `applyDivisor()` when a divisor is active (BigInt-safe). Picker is a `<select>`; no column selected → no stats shown. When a column is selected, displays: `Σ sum · avg mean · min min · max max · σ stddev` (population stddev, divides by N). The divisor label (e.g. `(1e18)`) is shown in muted text when a divisor is active.
 
 **`applyDivisor(value, divisor)`:** BigInt arithmetic. Preserves full precision. Returns a decimal string (e.g. `"1.234567890123456789"`).
 
@@ -1119,7 +1121,7 @@ Manages local `view` state (`'table'` | `'chart'`). Renders both `<ResultsTable>
 />
 ```
 
-Manages chart config: `xField`, `leftCols`, `rightCols`, `chartType`, `groupBy`, `leftCumulative`, `rightCumulative`, `leftAggregation`, `rightAggregation`, `leftScaleY`, `rightScaleY`, `xSortDir`, `showLegend`. Renders ECharts instance via `echarts.init`. Supports PNG download via `chart.getDataURL()`.
+Manages chart config: `xField`, `leftFields`, `rightFields`, `leftType`, `rightType`, `groupBy`, `leftYMode`, `rightYMode`, `leftAggregation`, `rightAggregation`, `leftScaleY`, `rightScaleY`, `xSortDir`, `showLegend`, `seriesColors` (per-field hex overrides `{ [fieldName]: hex }`), `colorSchemeId` (ID of the last applied scheme, null = palette defaults). Also manages picker UI state: `pickerField`, `pickerColor`, `schemeManagerOpen`. Renders ECharts instance via `echarts.init`. Supports PNG download via `chart.getDataURL()`.
 
 **Color scheme integration:**
 
@@ -1151,7 +1153,11 @@ When `theme` is null or a key is absent, the corresponding ECharts property is `
 
 **`buildChartData` refactor:** Uses a unified Map-group-then-aggregate pattern for all `groupBy` modes (including `'none'`). Collects values into arrays per `(bucket, field)`, then applies `aggregate(values, method)` to produce a single point value. The same `aggregate()` helper is used for all aggregation modes; `null` is returned for empty arrays, `Infinity`/`NaN`, and non-finite results (e.g., division by zero).
 
-**Saved chart view fields:** `xField`, `leftCols`, `rightCols`, `chartType`, `groupBy`, `leftCumulative`, `rightCumulative`, `leftAggregation`, `rightAggregation`, `leftScaleY`, `rightScaleY`, `xSortDir`, `showLegend`.
+**`axisName(fields, fieldMeta, yMode)`:** builds the Y-axis name label by joining field labels with `, `. When `yMode === 'cumulative'`, prepends `"cumulative "` to the result (e.g. right Y-axis shows `"cumulative amountStaked"` when set to cumulative mode).
+
+**`seriesColors` and per-series color picker:** each series badge in `YAxisSelector` is clickable and opens an `@uiw/react-color` Sketch picker inline. Explicit per-field colors are stored in `seriesColors` state. `applyScheme(scheme)` bulk-applies a color scheme's palette to all currently-configured fields. The active scheme colors are used as the fallback cycle (`paletteColors`) when no explicit override exists.
+
+**Saved chart view fields:** `xField`, `leftFields`, `rightFields`, `leftType`, `rightType`, `groupBy`, `leftYMode`, `rightYMode`, `leftAggregation`, `rightAggregation`, `leftScaleY`, `rightScaleY`, `xSortDir`, `showLegend`, `colDivisors`, `seriesColors`, `colorSchemeId`.
 
 ---
 
@@ -1607,7 +1613,7 @@ Run: `npm test --workspace=frontend`
 
 Config: `vitest.config.js` with `environment: 'jsdom'`, `setupFiles: ['@testing-library/jest-dom/vitest']`.
 
-**11 test files, 195 tests total:**
+**12 test files, ~220 tests total:**
 
 | File | Tests | Coverage |
 |---|---|---|
@@ -1624,7 +1630,7 @@ Config: `vitest.config.js` with `environment: 'jsdom'`, `setupFiles: ['@testing-
 | `components/__tests__/SchemaExplorer.test.jsx` | ~4 | GraphiQL embed, "Use This Query" button |
 | `components/__tests__/EndpointProfilesModal.test.jsx` | ~4 | Profile list, create, select, delete |
 
-**Grand total: 241 tests (195 frontend Vitest, 46 backend Jest)**
+**Grand total: ~266 tests (~220 frontend Vitest, 46 backend Jest)**
 
 **Mocking pattern:**
 - `vi.mock('../../api/client.js', () => ({ fn: vi.fn() }))` — mock BEFORE import
