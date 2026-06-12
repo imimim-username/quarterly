@@ -4,7 +4,7 @@
  * Tests for date-variable filtering.
  *
  * Three test groups:
- *   1. Unit / route-level (resolveVariables) — nock intercepts the outgoing
+ *   1. Unit / route-level (resolveVariables) — jest.fn() mocks the outgoing
  *      HTTP request so we can inspect exactly which variables were sent when
  *      the query has explicit global_start / global_end variable_defs.
  *   2. Auto date-filter injection — verifies that when a query has NO date
@@ -18,7 +18,6 @@
 const Database = require('better-sqlite3');
 const supertest = require('supertest');
 const express = require('express');
-const nock = require('nock');
 
 const migration001 = require('../src/migrations/001_initial');
 const migration002 = require('../src/migrations/002_address_labels');
@@ -36,6 +35,16 @@ const MOCK_ENDPOINT = MOCK_HOST + MOCK_PATH;
 const LIVE_ENDPOINT = 'https://ponder--ponder--qsxl6ml4dlkk.code.run/graphql';
 
 const INTEGRATION = process.env.QUARTERLY_INTEGRATION_TESTS === '1';
+
+// Mock a native-fetch-compatible Response object
+function mockResponse(data, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: () => Promise.resolve(data),
+    text: () => Promise.resolve(JSON.stringify(data)),
+  };
+}
 
 /** Create a fully-migrated in-memory SQLite database. */
 function createTestDb() {
@@ -115,17 +124,17 @@ function makeDateVarDefs(startName, endName, paginationStyle = 'offset') {
   return JSON.stringify(defs);
 }
 
-/** Helper: POST to /api/runs, return { status, body, capturedVars }. */
-async function runQuery(app, queryId, startDate, endDate, extraNockHandler) {
+/**
+ * Helper: POST to /api/runs, return { status, body, capturedVars }.
+ * Queues one fetch mock that captures variables and returns a minimal empty result.
+ */
+async function runQuery(app, queryId, startDate, endDate) {
   let capturedVars;
 
-  nock(MOCK_HOST)
-    .post(MOCK_PATH)
-    .reply(200, function (_uri, body) {
-      capturedVars = body.variables || {};
-      // Return a minimal single-page result
-      return { data: { items: { items: [] } } };
-    });
+  global.fetch.mockImplementationOnce(async (_url, opts) => {
+    capturedVars = JSON.parse(opts.body).variables || {};
+    return mockResponse({ data: { items: { items: [] } } });
+  });
 
   const res = await supertest(app)
     .post('/api/runs')
@@ -136,12 +145,17 @@ async function runQuery(app, queryId, startDate, endDate, extraNockHandler) {
 
 // ─── Setup / teardown ─────────────────────────────────────────────────────────
 
+let _realFetch;
+beforeEach(() => {
+  _realFetch = global.fetch;
+  global.fetch = jest.fn();
+});
 afterEach(() => {
-  nock.cleanAll();
+  global.fetch = _realFetch;
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// GROUP 1 — route-level tests (nock, no real network)
+// GROUP 1 — route-level tests (jest.fn(), no real network)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe('resolveVariables — date variable injection (via POST /api/runs)', () => {
@@ -272,12 +286,10 @@ describe('resolveVariables — date variable injection (via POST /api/runs)', ()
 
     test('pagination vars are injected by ponder, not in variables_base', async () => {
       let capturedVars;
-      nock(MOCK_HOST)
-        .post(MOCK_PATH)
-        .reply(200, function (_uri, body) {
-          capturedVars = body.variables || {};
-          return { data: { items: { items: [] } } };
-        });
+      global.fetch.mockImplementationOnce(async (_url, opts) => {
+        capturedVars = JSON.parse(opts.body).variables || {};
+        return mockResponse({ data: { items: { items: [] } } });
+      });
 
       await supertest(createApp(db))
         .post('/api/runs')
@@ -295,13 +307,9 @@ describe('resolveVariables — date variable injection (via POST /api/runs)', ()
     });
 
     test('variables_base stored in DB excludes pagination vars', async () => {
-      nock(MOCK_HOST)
-        .post(MOCK_PATH)
-        .reply(200, { data: { items: { items: [{ id: '1', timestamp: '1704067200' }] } } });
-      // Empty second page so pagination stops
-      nock(MOCK_HOST)
-        .post(MOCK_PATH)
-        .reply(200, { data: { items: { items: [] } } });
+      global.fetch
+        .mockResolvedValueOnce(mockResponse({ data: { items: { items: [{ id: '1', timestamp: '1704067200' }] } } }))
+        .mockResolvedValueOnce(mockResponse({ data: { items: { items: [] } } }));
 
       const START = '2024-01-01T00:00:00.000Z';
       const END = '2024-12-31T23:59:59.000Z';
@@ -399,7 +407,7 @@ describe('resolveVariables — date variable injection (via POST /api/runs)', ()
         variable_defs: 'not-valid-json',
         date_format: 'unix_seconds',
       });
-      // No nock needed — the route returns 400 before hitting the endpoint
+      // No fetch mock needed — the route returns 400 before hitting the endpoint
       const res = await supertest(app)
         .post('/api/runs')
         .send({ query_id: queryId, start_date: '2024-01-01T00:00:00.000Z' });
@@ -410,7 +418,7 @@ describe('resolveVariables — date variable injection (via POST /api/runs)', ()
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// GROUP 2 — Auto date-filter injection (unit + nock route tests)
+// GROUP 2 — Auto date-filter injection (unit + route tests)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // The user's exact alchemistBurns GQL (no variable_defs, no where clause).
@@ -551,7 +559,7 @@ describe('autoInjectDateFilter() — unit tests', () => {
   });
 });
 
-describe('Auto date-filter injection — route tests (nock)', () => {
+describe('Auto date-filter injection — route tests', () => {
   // alchemistBurns query matching the user's export (no variable_defs)
   function makeBurnsQuery(db) {
     return insertQuery(db, {
@@ -573,11 +581,14 @@ describe('Auto date-filter injection — route tests (nock)', () => {
     const START = '2026-05-15T00:00:00.000Z';
 
     let capturedBody = null;
-    // First page: one row
-    nock(MOCK_HOST).post(MOCK_PATH, body => { capturedBody = body; return true; })
-      .reply(200, { data: { alchemistBurns: { items: [MOCK_BURNS_ROW] } } });
-    // Second page: empty → pagination ends
-    nock(MOCK_HOST).post(MOCK_PATH).reply(200, { data: { alchemistBurns: { items: [] } } });
+    // First page: one row — capture the body
+    global.fetch
+      .mockImplementationOnce(async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        return mockResponse({ data: { alchemistBurns: { items: [MOCK_BURNS_ROW] } } });
+      })
+      // Second page: empty → pagination ends
+      .mockResolvedValueOnce(mockResponse({ data: { alchemistBurns: { items: [] } } }));
 
     const res = await supertest(app).post('/api/runs').send({ query_id: qid, start_date: START });
 
@@ -602,8 +613,10 @@ describe('Auto date-filter injection — route tests (nock)', () => {
     const END   = '2026-05-16T00:00:00.000Z';
 
     let capturedBody = null;
-    nock(MOCK_HOST).post(MOCK_PATH, body => { capturedBody = body; return true; })
-      .reply(200, { data: { alchemistBurns: { items: [] } } });
+    global.fetch.mockImplementationOnce(async (_url, opts) => {
+      capturedBody = JSON.parse(opts.body);
+      return mockResponse({ data: { alchemistBurns: { items: [] } } });
+    });
 
     await supertest(app).post('/api/runs').send({ query_id: qid, start_date: START, end_date: END });
 
@@ -627,8 +640,10 @@ describe('Auto date-filter injection — route tests (nock)', () => {
     });
 
     let capturedBody = null;
-    nock(MOCK_HOST).post(MOCK_PATH, body => { capturedBody = body; return true; })
-      .reply(200, { data: { alchemistBurns: { items: [] } } });
+    global.fetch.mockImplementationOnce(async (_url, opts) => {
+      capturedBody = JSON.parse(opts.body);
+      return mockResponse({ data: { alchemistBurns: { items: [] } } });
+    });
 
     const START = '2026-05-15T00:00:00.000Z';
     await supertest(app).post('/api/runs').send({ query_id: qid, start_date: START });
@@ -645,8 +660,10 @@ describe('Auto date-filter injection — route tests (nock)', () => {
     const qid = makeBurnsQuery(db);
 
     let capturedBody = null;
-    nock(MOCK_HOST).post(MOCK_PATH, body => { capturedBody = body; return true; })
-      .reply(200, { data: { alchemistBurns: { items: [] } } });
+    global.fetch.mockImplementationOnce(async (_url, opts) => {
+      capturedBody = JSON.parse(opts.body);
+      return mockResponse({ data: { alchemistBurns: { items: [] } } });
+    });
 
     await supertest(app).post('/api/runs').send({ query_id: qid });
 
@@ -661,15 +678,18 @@ describe('Auto date-filter injection — route tests (nock)', () => {
     const START = '2026-05-15T00:00:00.000Z';
 
     let fallbackBody = null;
-    // First request (injected): endpoint returns a GraphQL error
-    nock(MOCK_HOST).post(MOCK_PATH)
-      .reply(200, { errors: [{ message: 'Unknown argument "where" on field "Query.alchemistBurns".' }] });
-    // Second request (fallback): original query succeeds
-    nock(MOCK_HOST).post(MOCK_PATH, body => { fallbackBody = body; return true; })
-      .reply(200, { data: { alchemistBurns: { items: [MOCK_BURNS_ROW] } } });
-    // Third request (pagination page 2 of fallback): empty
-    nock(MOCK_HOST).post(MOCK_PATH)
-      .reply(200, { data: { alchemistBurns: { items: [] } } });
+    global.fetch
+      // First request (injected): endpoint returns a GraphQL error
+      .mockResolvedValueOnce(mockResponse({
+        errors: [{ message: 'Unknown argument "where" on field "Query.alchemistBurns".' }],
+      }))
+      // Second request (fallback first page): original query succeeds
+      .mockImplementationOnce(async (_url, opts) => {
+        fallbackBody = JSON.parse(opts.body);
+        return mockResponse({ data: { alchemistBurns: { items: [MOCK_BURNS_ROW] } } });
+      })
+      // Third request (pagination page 2 of fallback): empty
+      .mockResolvedValueOnce(mockResponse({ data: { alchemistBurns: { items: [] } } }));
 
     const res = await supertest(app).post('/api/runs').send({ query_id: qid, start_date: START });
 
@@ -694,11 +714,13 @@ describe('Auto date-filter injection — route tests (nock)', () => {
 
     let requestCount = 0;
     // Return a graphql_partial on the first page (data + errors)
-    nock(MOCK_HOST).post(MOCK_PATH, () => { requestCount++; return true; })
-      .reply(200, {
+    global.fetch.mockImplementationOnce(async () => {
+      requestCount++;
+      return mockResponse({
         data: { alchemistBurns: { items: [MOCK_BURNS_ROW] } },
         errors: [{ message: 'Some partial error' }],
       });
+    });
 
     const res = await supertest(app).post('/api/runs').send({ query_id: qid, start_date: START });
 

@@ -1,7 +1,5 @@
 'use strict';
 
-const fetch = require('node-fetch');
-
 /**
  * Resolve a dotted path in an object.
  * e.g. getPath(obj, "data.deposits.items")

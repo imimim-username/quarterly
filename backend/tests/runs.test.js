@@ -19,13 +19,31 @@ try {
 }
 
 if (nativeAvailable) {
-  const nock = require('nock');
   request = require('supertest');
   express = require('express');
   runsRoutes = require('../src/routes/runs');
 
   const ENDPOINT = 'http://127.0.0.1:9998';
   const GQL_PATH = '/graphql';
+
+  // Mock a native-fetch-compatible Response object
+  function mockResponse(data, status = 200) {
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      json: () => Promise.resolve(data),
+      text: () => Promise.resolve(JSON.stringify(data)),
+    };
+  }
+
+  let _realFetch;
+  beforeEach(() => {
+    _realFetch = global.fetch;
+    global.fetch = jest.fn();
+  });
+  afterEach(() => {
+    global.fetch = _realFetch;
+  });
 
   function makeDb() {
     const db = new Database(':memory:');
@@ -83,17 +101,13 @@ if (nativeAvailable) {
     return app;
   }
 
-  afterEach(() => {
-    nock.cleanAll();
-  });
-
   describe('POST /api/runs — valid run saved', () => {
     test('valid run returns rows and saves to DB', async () => {
       const db = makeDb();
       const queryId = makeQuery(db);
-      nock(ENDPOINT).post(GQL_PATH).reply(200, {
-        data: { items: [{ id: '1' }, { id: '2' }] },
-      });
+      global.fetch
+        .mockResolvedValueOnce(mockResponse({ data: { items: [{ id: '1' }, { id: '2' }] } }))
+        .mockResolvedValueOnce(mockResponse({ data: { items: [] } }));
 
       const app = makeApp(db);
       const res = await request(app).post('/api/runs').send({ query_id: queryId });
@@ -118,7 +132,7 @@ if (nativeAvailable) {
     test('endpoint unreachable → 502, not saved', async () => {
       const db = makeDb();
       const queryId = makeQuery(db);
-      nock(ENDPOINT).post(GQL_PATH).replyWithError('ECONNREFUSED');
+      global.fetch.mockRejectedValueOnce(new Error('ECONNREFUSED'));
 
       const app = makeApp(db);
       const res = await request(app).post('/api/runs').send({ query_id: queryId });
@@ -131,9 +145,9 @@ if (nativeAvailable) {
     test('GraphQL errors only → 400, not saved', async () => {
       const db = makeDb();
       const queryId = makeQuery(db);
-      nock(ENDPOINT).post(GQL_PATH).reply(200, {
+      global.fetch.mockResolvedValueOnce(mockResponse({
         errors: [{ message: 'Unknown field' }],
-      });
+      }));
 
       const app = makeApp(db);
       const res = await request(app).post('/api/runs').send({ query_id: queryId });
@@ -150,7 +164,7 @@ if (nativeAvailable) {
       const queryId = makeQuery(db);
       // Build a response large enough to trigger warn_bytes (1MB default)
       const bigRow = { id: '1', data: 'x'.repeat(2000000) }; // ~2MB
-      nock(ENDPOINT).post(GQL_PATH).reply(200, { data: { items: [bigRow] } });
+      global.fetch.mockResolvedValueOnce(mockResponse({ data: { items: [bigRow] } }));
 
       const app = makeApp(db);
       const res = await request(app).post('/api/runs').send({ query_id: queryId });
@@ -180,8 +194,9 @@ if (nativeAvailable) {
       );
       const queryId = info.lastInsertRowid;
 
-      nock(ENDPOINT).post(GQL_PATH).reply(200, { data: { items: [{ id: '1' }] } });
-      nock(ENDPOINT).post(GQL_PATH).reply(200, { data: { items: [] } });
+      global.fetch
+        .mockResolvedValueOnce(mockResponse({ data: { items: [{ id: '1' }] } }))
+        .mockResolvedValueOnce(mockResponse({ data: { items: [] } }));
 
       const app = makeApp(db);
       const res = await request(app).post('/api/runs').send({ query_id: queryId });

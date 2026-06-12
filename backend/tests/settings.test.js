@@ -19,10 +19,28 @@ try {
 }
 
 if (nativeAvailable) {
-  const nock = require('nock');
   request = require('supertest');
   express = require('express');
   settingsRoutes = require('../src/routes/settings');
+
+  // Mock a native-fetch-compatible Response object
+  function mockResponse(data, status = 200) {
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      json: () => Promise.resolve(data),
+      text: () => Promise.resolve(JSON.stringify(data)),
+    };
+  }
+
+  let _realFetch;
+  beforeEach(() => {
+    _realFetch = global.fetch;
+    global.fetch = jest.fn();
+  });
+  afterEach(() => {
+    global.fetch = _realFetch;
+  });
 
   function makeDb() {
     const db = new Database(':memory:');
@@ -52,10 +70,6 @@ if (nativeAvailable) {
     app.use('/api/settings', settingsRoutes(db));
     return app;
   }
-
-  afterEach(() => {
-    nock.cleanAll();
-  });
 
   describe('GET /api/settings', () => {
     test('returns defaults', async () => {
@@ -96,7 +110,7 @@ if (nativeAvailable) {
       db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('endpoint', ?)").run('http://127.0.0.1:9997/graphql');
       const app = makeApp(db);
 
-      nock('http://127.0.0.1:9997').post('/graphql').reply(200, { data: { __typename: 'Query' } });
+      global.fetch.mockResolvedValueOnce(mockResponse({ data: { __typename: 'Query' } }));
 
       const res = await request(app).get('/api/settings/ping');
       expect(res.status).toBe(200);

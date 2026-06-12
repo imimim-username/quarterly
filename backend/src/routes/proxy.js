@@ -1,7 +1,6 @@
 'use strict';
 
 const express = require('express');
-const fetch = require('node-fetch');
 const { validateUrl } = require('../middleware/validateEndpoint');
 
 

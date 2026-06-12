@@ -1,7 +1,6 @@
 'use strict';
 
 const express = require('express');
-const fetch = require('node-fetch');
 const { validateUrl } = require('../middleware/validateEndpoint');
 
 
@@ -39,13 +38,15 @@ module.exports = function introspectRoutes(db) {
       return res.status(400).json({ error: 'invalid_endpoint', message: errorMsg });
     }
 
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), 15000);
     try {
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: INTROSPECTION_QUERY }),
         redirect: 'error',
-        timeout: 15000,
+        signal: abort.signal,
       });
 
       if (!response.ok) {
@@ -72,7 +73,12 @@ module.exports = function introspectRoutes(db) {
 
       res.json({ types });
     } catch (e) {
+      if (e.name === 'AbortError') {
+        return res.status(504).json({ error: 'timeout', message: 'Introspection request timed out after 15s.' });
+      }
       res.status(502).json({ error: 'network', message: e.message });
+    } finally {
+      clearTimeout(timer);
     }
   });
 

@@ -1,7 +1,6 @@
 'use strict';
 
 const express = require('express');
-const fetch = require('node-fetch');
 const { validateUrl } = require('../middleware/validateEndpoint');
 
 
@@ -88,13 +87,15 @@ module.exports = function settingsRoutes(db) {
     }
 
     const start = Date.now();
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), 10000);
     try {
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: '{ __typename }' }),
         redirect: 'error',
-        timeout: 10000,
+        signal: abort.signal,
       });
       const latency_ms = Date.now() - start;
       if (!response.ok) {
@@ -104,7 +105,9 @@ module.exports = function settingsRoutes(db) {
       res.json({ ok: true, latency_ms });
     } catch (e) {
       const latency_ms = Date.now() - start;
-      res.json({ ok: false, error: e.message, latency_ms });
+      res.json({ ok: false, error: e.name === 'AbortError' ? 'Ping timed out after 10s.' : e.message, latency_ms });
+    } finally {
+      clearTimeout(timer);
     }
   });
 
