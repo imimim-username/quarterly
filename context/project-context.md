@@ -123,16 +123,16 @@ quarterly/                          npm workspace root
 
 | Library | Version | Role |
 |---|---|---|
-| Node.js | 20+ | runtime |
+| Node.js | 22+ | runtime |
 | Express | 4.22.2 | HTTP server |
 | better-sqlite3 | 12.10.0 | SQLite driver (native C++ addon) |
-| node-fetch | 2.7.0 | GraphQL HTTP client |
 | csv-stringify | 6.7.0 | CSV generation |
-| archiver | 7.0.1 | ZIP creation |
+| archiver | 8.0.0 | ZIP creation |
 | ipaddr.js | 2.4.0 | IP range classification for SSRF protection |
 | Jest | 29.7.0 | test runner |
 | supertest | 7.2.2 | HTTP test assertions |
-| nock | 13.5.6 | HTTP mocking in tests |
+
+**Note:** `node-fetch` was removed in commit `d4046e9` — Node 22's built-in global `fetch` is used throughout. `nock` was also removed; all backend tests mock HTTP via `jest.fn()` on `global.fetch` instead.
 
 ### Frontend
 
@@ -146,7 +146,7 @@ quarterly/                          npm workspace root
 | @tanstack/react-virtual | 3.13.24 | virtual scrolling for large tables |
 | graphiql | 3.7.1 | embedded GraphQL explorer |
 | @graphiql/plugin-explorer | 3.2.3 | field explorer plugin |
-| react-datepicker | 7.6.0 | date pickers |
+| react-datepicker | 9.1.0 | date pickers |
 | expr-eval | 2.0.2 | safe arithmetic expression parser used internally (no eval/Function) — note: computed columns now use a custom built-in parser instead |
 | @uiw/react-color | (pinned) | Sketch color picker for color scheme editor |
 | Vitest | 4.1.8 | frontend test runner (upgraded from 3 to fix CVE-2026-47429) |
@@ -480,7 +480,22 @@ Main entrypoint. Returns:
 - `network` / `timeout` / `cancelled` — not saved
 - `size_limit` / `row_limit` / `page_limit` — not saved
 
-**Per-page timeout:** creates an `AbortController` per page fetch with `setTimeout(timeoutPerPage)`. Combined with user-provided signal via event listener.
+**Per-page timeout:** creates an `AbortController` per page fetch with `setTimeout(timeoutPerPage)`. Combined with user-provided signal via event listener. `clearTimeout` called in a `finally` block.
+
+**Native fetch timeout pattern** (used in `introspect.js` and `settings.js` ping route — node-fetch's proprietary `timeout` option is gone):
+```js
+const abort = new AbortController();
+const timer = setTimeout(() => abort.abort(), timeoutMs);
+try {
+  const response = await fetch(endpoint, { ..., signal: abort.signal });
+  // handle response
+} catch (e) {
+  if (e.name === 'AbortError') { /* handle timeout */ }
+  // handle other network errors
+} finally {
+  clearTimeout(timer);
+}
+```
 
 ### `export.js`
 
@@ -1594,7 +1609,30 @@ Config: `jest` in `backend/package.json`, `--runInBand` (sequential — avoids S
 - `makeDb()` creates an in-memory SQLite with full schema, inserts test settings
 - `makeApp(db)` creates a fresh Express app with route under test
 - Each test creates its own db + app, closes db at end
-- `nock` mocks HTTP calls to the GraphQL endpoint
+- HTTP calls to the GraphQL endpoint are mocked via `global.fetch = jest.fn()` (save/restore in `beforeEach`/`afterEach`)
+
+**HTTP mock helpers (all test files that exercise network calls):**
+```js
+function mockResponse(data, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: () => Promise.resolve(data),
+    text: () => Promise.resolve(JSON.stringify(data)),
+  };
+}
+let _realFetch;
+beforeEach(() => { _realFetch = global.fetch; global.fetch = jest.fn(); });
+afterEach(() => { global.fetch = _realFetch; });
+```
+
+Common patterns:
+- Single reply: `global.fetch.mockResolvedValueOnce(mockResponse(data))`
+- Chained replies (pagination): `global.fetch.mockResolvedValueOnce(...).mockResolvedValueOnce(...)`
+- Body capture: `global.fetch.mockImplementationOnce(async (_url, opts) => { captured = JSON.parse(opts.body); return mockResponse(data); })`
+- Error: `global.fetch.mockRejectedValueOnce(new Error('ECONNREFUSED'))`
+
+**Why not nock?** `nock` intercepts Node's `http`/`https` modules. Node 22's native `fetch` uses `undici` internally, which bypasses those hooks entirely. Removed `nock` from devDependencies (commit `d4046e9`).
 
 **`runs.test.js` adds `notes TEXT` to its `makeDb()` schema** because migration 004 adds it via `ALTER TABLE`, which the in-memory test db doesn't run.
 
@@ -1703,7 +1741,25 @@ CSS class patterns used:
 
 ---
 
-## 16. Future / Maybe
+## 16. Dependency Security Notes
+
+Last audited: **2026-06-12** (commit `d4046e9`).
+
+`npm audit` reports **0 vulnerabilities** across all workspaces. The following were investigated via NVD and GitHub advisories in addition to the npm advisory database:
+
+| CVE | Package | CVSS | Fixed in | Status |
+|---|---|---|---|---|
+| CVE-2026-39363 | vite | 8.2 (LFI via WebSocket) | 6.4.3 | ✅ Pinned to 6.4.2 — **not affected** (LFI via `?import&raw` only; 6.4.2 patches the WebSocket vector) |
+| CVE-2025-71176 | vitest | 9.8 | 4.1.8 | ✅ Pinned to 4.1.8 — the exact fix release |
+| — | archiver | — | 8.0.0 | ✅ Bumped 7.0.1 → 8.0.0 (upstream security bump) |
+| — | react-datepicker | — | 9.1.0 | ✅ Bumped 7.6.0 → 9.1.0 (upstream security bump) |
+| — | node-fetch | supply chain + SSRF risk | — | ✅ Removed entirely; native Node 22 `fetch` used instead |
+
+**SSH deploy key:** `/workspace/extra/github-keys/github_deploy` (ed25519, comment: `nanoclaw-bot`). Copy to `~/.ssh/id_ed25519` before pushing.
+
+---
+
+## 17. Future / Maybe
 
 Ideas that have been raised but explicitly deferred. Do not implement without checking with the user first.
 
