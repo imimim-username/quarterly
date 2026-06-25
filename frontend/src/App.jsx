@@ -14,6 +14,7 @@ import QueryPreviewModal from './components/QueryPreviewModal.jsx'
 import EndpointProfilesModal from './components/EndpointProfilesModal.jsx'
 import ReportsPanel from './components/ReportsPanel.jsx'
 import ResultsView from './components/ResultsView.jsx'
+import MultiQueryChart from './components/MultiQueryChart.jsx'
 import { createRun, listAddressLabels, updateQuery, createQuery, updateSettings, listRuns, getRun, listColorSchemes } from './api/client.js'
 import { applyComputedColumns, computedFieldMeta } from './utils/computedColumns.js'
 import { applyTimestampExtraction, timestampExtractionMeta } from './utils/timestampExtraction.js'
@@ -45,7 +46,7 @@ export default function App() {
   const [startDate, setStartDate] = useState(null)
   const [endDate, setEndDate] = useState(null)
   const [selectedQuery, setSelectedQuery] = useState(null)
-  const [tab, setTab] = useState('editor') // 'editor' | 'results' | 'compare' | 'reports'
+  const [tab, setTab] = useState('editor') // 'editor' | 'results' | 'compare' | 'reports' | 'multi'
   const [colDivisors, setColDivisors] = useState({})
   const [running, setRunning] = useState(false)
   const [currentRun, setCurrentRun] = useState(null)
@@ -396,6 +397,7 @@ export default function App() {
             <button className={tab === 'editor' ? 'active' : ''} onClick={() => setTab('editor')}>Editor</button>
             <button className={tab === 'results' ? 'active' : ''} onClick={() => setTab('results')}>Results</button>
             <button className={tab === 'reports' ? 'active' : ''} onClick={() => setTab('reports')}>Reports</button>
+            <button className={tab === 'multi' ? 'active' : ''} onClick={() => setTab('multi')}>Multi-Query Chart</button>
             {compareRuns && (
               <button className={tab === 'compare' ? 'active' : ''} onClick={() => setTab('compare')}>Compare</button>
             )}
@@ -567,6 +569,13 @@ export default function App() {
                     : 'Select a query and click Run to see results.'}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Multi-Query Chart tab */}
+          {tab === 'multi' && (
+            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'auto', padding: '4px 0' }}>
+              <MultiQueryChart colorSchemes={colorSchemes} />
             </div>
           )}
 
