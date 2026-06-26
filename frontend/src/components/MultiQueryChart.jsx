@@ -279,7 +279,7 @@ function SeriesRow({ series, datasets, paletteColor, onUpdate, onRemove }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function MultiQueryChart({ colorSchemes = [] }) {
+export default function MultiQueryChart() {
   // All saved queries from the API
   const [savedQueries, setSavedQueries] = useState([])
   const [queriesLoaded, setQueriesLoaded] = useState(false)
@@ -330,15 +330,12 @@ export default function MultiQueryChart({ colorSchemes = [] }) {
   }, [])
 
   const removeDataset = useCallback((idx) => {
-    setDatasets(prev => {
-      const removed = prev.filter((_, i) => i !== idx)
-      // Remove series that referenced this dataset; renumber higher indices
-      setSeriesList(sl => sl
-        .filter(s => s.datasetIdx !== idx)
-        .map(s => ({ ...s, datasetIdx: s.datasetIdx > idx ? s.datasetIdx - 1 : s.datasetIdx }))
-      )
-      return removed
-    })
+    setDatasets(prev => prev.filter((_, i) => i !== idx))
+    // Remove series that referenced this dataset; renumber higher indices
+    setSeriesList(prev => prev
+      .filter(s => s.datasetIdx !== idx)
+      .map(s => ({ ...s, datasetIdx: s.datasetIdx > idx ? s.datasetIdx - 1 : s.datasetIdx }))
+    )
   }, [])
 
   const runDataset = useCallback(async (idx) => {

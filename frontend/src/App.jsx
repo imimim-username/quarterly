@@ -575,7 +575,7 @@ export default function App() {
           {/* Multi-Query Chart tab */}
           {tab === 'multi' && (
             <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'auto', padding: '4px 0' }}>
-              <MultiQueryChart colorSchemes={colorSchemes} />
+              <MultiQueryChart />
             </div>
           )}
 
