@@ -102,11 +102,13 @@ quarterly/                          npm workspace root
 │       │   ├── addressLabels.js    buildAddressMap / resolveAddress utilities
 │       │   ├── computedColumns.js  applyComputedColumns / computedFieldMeta / custom arithmetic parser
 │       │   ├── timestampExtraction.js  applyTimestampExtraction / timestampExtractionMeta
+│       │   ├── mergeDatasets.js    mergeDatasets / formatXLabel — union-join for MultiQueryChart
 │       │   └── __tests__/
 │       │       ├── computedColumns.test.js   (115 tests)
-│       │       └── timestampExtraction.test.js  (25 tests)
-│       └── components/             24 components (see §10)
-│           ├── __tests__/          12 Vitest test files
+│       │       ├── timestampExtraction.test.js  (25 tests)
+│       │       └── mergeDatasets.test.js     (38 tests)
+│       └── components/             25 components (see §10)
+│           ├── __tests__/          14 Vitest test files
 │           └── ...
 └── queries/
     └── builtin/
@@ -139,7 +141,7 @@ quarterly/                          npm workspace root
 | Library | Version | Role |
 |---|---|---|
 | React | 18.3.1 | UI framework |
-| Vite | 6.4.2 | build tool + dev server |
+| Vite | 6.4.3 | build tool + dev server |
 | ECharts | 5.6.0 | charts |
 | @uiw/react-codemirror | 4.25.9 | GraphQL code editor |
 | @codemirror/lang-javascript | 6.2.5 | syntax highlighting |
@@ -852,7 +854,7 @@ function formatAge(ranAt, now) {
 | `startDate` | `Date \| null` | Global date range start |
 | `endDate` | `Date \| null` | Global date range end |
 | `selectedQuery` | `object \| null` | Currently loaded query definition (full object with parsed JSON fields) |
-| `tab` | `string` | Active tab: `'editor'` \| `'results'` \| `'compare'` \| `'reports'` |
+| `tab` | `string` | Active tab: `'editor'` \| `'results'` \| `'compare'` \| `'reports'` \| `'multi'` |
 | `colDivisors` | `object` | `{ [colName]: 'raw' \| '1e6' \| '1e18' \| 'datetime' }` — lifted from ResultsView |
 | `running` | `bool` | True while query is executing |
 | `currentRun` | `object \| null` | Latest run result (rows + metadata) |
@@ -931,6 +933,17 @@ fieldMeta = {
 }
 ```
 This ensures all synthesised columns get proper labels in `ResultsTable` headers and chart field selectors.
+
+### Multi-Query Chart tab — lazy-mount pattern
+
+```js
+const multiMounted = useRef(false)
+if (tab === 'multi') multiMounted.current = true
+```
+
+Once `multiMounted.current` is true, the `MultiQueryChart` wrapper div is always rendered (never unmounted). Visibility is toggled via `display: tab === 'multi' ? 'flex' : 'none'`. This preserves all component state (datasets, rows, series config, saved configs) across tab switches.
+
+`MultiQueryChart` receives four props from App: `startDate`, `endDate`, `colorSchemes`, `addressLabels`.
 
 ### Modals and overlays
 
@@ -1202,6 +1215,82 @@ Full-screen modal (fixed overlay, backdrop click closes). Fetches all schemes on
 
 ---
 
+### `MultiQueryChart`
+
+```jsx
+<MultiQueryChart
+  startDate={Date|null}      // from App date picker — passed to every createRun call
+  endDate={Date|null}
+  colorSchemes={array}       // all color scheme objects from App state
+  addressLabels={array}      // for chip label resolution in ResultFilters
+/>
+```
+
+Manages its own complete state — no state in App other than the four props above. Kept permanently mounted via the lazy-mount pattern (see §9) once the tab is first visited.
+
+**Dataset state shape** (one entry per added query):
+```js
+{
+  id: string,            // 'ds_<timestamp>' — stable key
+  queryId: number,
+  name: string,
+  xField: string,        // column used as X axis (auto-detected on first run)
+  groupBy: 'day'|'week'|'month'|'none',
+  aggregation: 'sum'|'avg'|'median'|'min'|'max'|'count',
+  yMode: 'raw'|'cumulative',
+  colDivisors: object,   // { [col]: 'raw'|'1e6'|'1e18' }
+  activeFilters: object, // { [col]: string[] } — per-dataset column-value filters
+  status: null|'running'|'done'|'error',
+  rows: array|null,
+  rowCount: number,
+  error: string|null,
+  lastColumns: string[], // column names from most recent run (used before rows available)
+}
+```
+
+**Series state shape** (one entry per chart series):
+```js
+{
+  id: string,            // 's_<timestamp>'
+  datasetIdx: number,    // which dataset this series reads from
+  field: string,         // column name within that dataset
+  label: string,         // display name (blank = auto from dataset+field)
+  yAxis: 'left'|'right',
+  type: 'line'|'bar'|'area',
+  color: string,         // explicit hex override (blank = palette auto)
+}
+```
+
+**Data flow:**
+1. User adds datasets (selects saved query from dropdown)
+2. User clicks Run per-dataset (or Run All) → `createRun` called with `start_date`/`end_date`
+3. Per-dataset `activeFilters` applied to rows before groupBy bucketing
+4. `mergeDatasets(mergeInputs)` union-joins all datasets on shared X-axis bucket keys
+5. `echartsSeriesList` maps series config to ECharts series objects using `palette` colors
+6. `<ECharts>` wrapper renders the chart
+
+**`mergeInputs`** (useMemo) — maps each dataset to the shape `mergeDatasets` expects, pre-filtering rows by `activeFilters`.
+
+**`palette`** (useMemo) — resolves `schemeId` against `colorSchemes` prop → falls back to `DEFAULT_PALETTE` (12 colors).
+
+**LocalStorage persistence (`mqc_configs` key):**
+- `saveConfig(name)` — serializes current state (strips `rows`, `status`, `rowCount`, `error` via `serializeDataset`), saves to localStorage array
+- `loadConfig(name)` — restores datasets (rows set to null; user re-runs) + series + options + schemeId
+- `deleteConfig(name)` — removes entry by name
+- UI: "Save config" button (with inline name input), "Load config…" dropdown, "Delete…" dropdown
+
+**Controls strip (top):** dataset picker dropdown, Run All button (when >1 dataset), "+ Add Series", color scheme picker (when `colorSchemes.length > 0`), Connect nulls checkbox, Legend checkbox, save/load/delete UI.
+
+**`DatasetRow`** sub-component: shows dataset name + status; X/groupBy/aggregation/yMode selectors; divisor buttons (accent-colored when active, cycling raw→÷1e6→÷1e18 on click); `<ResultFilters>` chip UI (appears after run, filters applied before merge).
+
+**`SeriesRow`** sub-component: color picker input; dataset selector; field selector (shows "— run dataset first —" when no columns); label text input; chart type selector; Y-axis selector; remove button.
+
+**`ECharts`** wrapper: `useEffect` to `echarts.init(container, 'dark')`; `ResizeObserver` to call `chart.resize()`; `useEffect` to `setOption(option, { notMerge: true })` on option changes.
+
+**Chart features:** dual Y-axis (left/right); data zoom (inside + slider); toolbox (zoom reset + PNG save); tooltip with color dots; `fmtAxisVal` compact formatter (K/M/B/T suffixes); `connectNulls` toggle; `showLegend` toggle; `xLabels` formatted via `formatXLabel(key, sharedGroupBy)`.
+
+---
+
 ### `ResultFilters`
 
 ```jsx
@@ -1213,7 +1302,7 @@ Full-screen modal (fixed overlay, backdrop click closes). Fetches all schemes on
 />
 ```
 
-Computes distinct values per column. Resolves address labels for display. Renders chip-style toggles.
+Computes distinct values per column. Resolves address labels for display. Renders chip-style toggles. Used in both the **Results tab** (App-level) and **inside each `DatasetRow`** in MultiQueryChart (per-dataset filtering).
 
 ---
 
@@ -1468,6 +1557,33 @@ deleteEndpoint(id)
 
 ## 12. Key Implementation Details
 
+### `mergeDatasets.js` — multi-dataset X-axis union join
+
+File: `frontend/src/utils/mergeDatasets.js`
+
+Exports `mergeDatasets(datasets)` and `formatXLabel(key, groupBy)`.
+
+**`mergeDatasets(datasets)`** — takes an array of dataset descriptors and returns `{ xKeys, rows, seriesKeys }`.
+
+Each descriptor:
+```js
+{ id, rows, xField, yFields, colDivisors, groupBy, aggregation, yMode }
+```
+
+**Algorithm:**
+1. **`bucketDataset`** — groups each dataset's rows into `Map<bucketKey, { [field]: number[] }>`. Bucket keys come from `bucketTimestamp(ts, groupBy)` which normalises unix timestamps to day/week/month starts in UTC. `applyDivisorNumeric` applies `÷1e6`/`÷1e18` scaling (BigInt arithmetic) per column before collecting into buckets.
+2. **Union all keys** — `new Set(...)` across all datasets' Maps.
+3. **Sort keys** — numeric sort (timestamps), string sort otherwise.
+4. **Aggregate per bucket** — `aggregate(values, method)` applies sum/avg/median/min/max/count; returns `null` for empty arrays.
+5. **Cumulative mode** — iterates keys in order, running a sum per field, mutates `aggMap` in place.
+6. **Merge rows** — for each `xKey`, one row object `{ x, d0_field, d1_field, ... }`. Missing buckets for a dataset → `null` (null-fill). Series key prefix `d{idx}_` prevents column name collisions across datasets.
+
+**`formatXLabel(key, groupBy)`** — formats a unix-seconds bucket key as a human-readable date string. Keys > 946684800 (year 2000) are formatted as dates; others are stringified as-is.
+
+**Type-compatible X alignment:** both datasets are bucketed with the same `groupBy` before joining. Timestamps in dataset A and B don't have to match exactly — they just need to be unix timestamps so `bucketTimestamp` maps them to the same bucket.
+
+---
+
 ### Divisor persistence
 
 `colDivisors` is lifted to `App` level so it survives query re-runs. When a user cycles a divisor via the column badge in `ResultsTable`, `onDivisorChange(newDivisors)` is called. In `App.handleDivisorChange`:
@@ -1651,7 +1767,7 @@ Run: `npm test --workspace=frontend`
 
 Config: `vitest.config.js` with `environment: 'jsdom'`, `setupFiles: ['@testing-library/jest-dom/vitest']`.
 
-**12 test files, ~220 tests total:**
+**14 test files, 258 tests total:**
 
 | File | Tests | Coverage |
 |---|---|---|
@@ -1659,8 +1775,10 @@ Config: `vitest.config.js` with `environment: 'jsdom'`, `setupFiles: ['@testing-
 | `components/__tests__/ComputedColumnsEditor.test.jsx` | 12 | Empty state, existing defs, edit flow, delete, add (success/validation errors/cancel), reorder |
 | `components/__tests__/ColorSchemeManager.test.jsx` | 32 | List rendering (swatches, default badge), set default, delete, create, edit (name/colors/theme), "Override chart appearance" checkbox behavior (opt-in, pre-checked for themed schemes, hides/shows pickers), save with and without theme, update scheme with and without theme |
 | `components/__tests__/ResultsView.test.jsx` | 22 | Renders table by default, chart tab switch (Chart button), `display:none` toggling (both children always mounted), props flow through (divisors, filters, save view), color scheme props forwarded to ResultsChart |
+| `components/__tests__/MultiQueryChart.test.jsx` | 25 | Initial render, query loading, add/remove datasets, run datasets (createRun args with start_date/end_date), auto-xField, series add/remove, chart controls, Run All, dataset config selectors. Mocks: `vi.mock('../../api/client.js')`, `vi.mock('echarts')`, `global.ResizeObserver` stub |
 | `utils/__tests__/computedColumns.test.js` | 115 | `parseFormula` (valid/invalid/empty), `applyComputedColumns` (no defs, arithmetic, divisors, zero, chaining, invalid formula, div-by-zero, prototype blocking), `computedFieldMeta`, custom parser operators |
 | `utils/__tests__/timestampExtraction.test.js` | 25 | `applyTimestampExtraction` (null config, before/after position, missing field, delimiter variants), `timestampExtractionMeta` |
+| `utils/__tests__/mergeDatasets.test.js` | 38 | Guard cases, aggregation (sum/avg/min/max/count/median), groupBy (day/week/month), cumulative, divisors, two-dataset union join, same-column collision prevention, type-compatible X alignment, three datasets, formatXLabel |
 | `components/__tests__/EndpointBar.test.jsx` | ~5 | URL save, ping, explore button visibility |
 | `components/__tests__/QuerySidebar.test.jsx` | ~5 | Query listing, search filter, builtin import |
 | `components/__tests__/HistoryDrawer.test.jsx` | ~4 | Run list, note editing, pin/compare flow |
@@ -1668,7 +1786,9 @@ Config: `vitest.config.js` with `environment: 'jsdom'`, `setupFiles: ['@testing-
 | `components/__tests__/SchemaExplorer.test.jsx` | ~4 | GraphiQL embed, "Use This Query" button |
 | `components/__tests__/EndpointProfilesModal.test.jsx` | ~4 | Profile list, create, select, delete |
 
-**Grand total: ~266 tests (~220 frontend Vitest, 46 backend Jest)**
+**Grand total: ~304 tests (258 frontend Vitest + 46 backend Jest)**
+
+**Important:** run Vitest from `frontend/` directory, not repo root. Root `package.json` `test` script only runs backend Jest.
 
 **Mocking pattern:**
 - `vi.mock('../../api/client.js', () => ({ fn: vi.fn() }))` — mock BEFORE import
@@ -1743,19 +1863,21 @@ CSS class patterns used:
 
 ## 16. Dependency Security Notes
 
-Last audited: **2026-06-12** (commit `d4046e9`).
+Last audited: **2026-06-28** (commits `f2b7d67`, `8e5639f`).
 
 `npm audit` reports **0 vulnerabilities** across all workspaces. The following were investigated via NVD and GitHub advisories in addition to the npm advisory database:
 
 | CVE | Package | CVSS | Fixed in | Status |
 |---|---|---|---|---|
-| CVE-2026-39363 | vite | 8.2 (LFI via WebSocket) | 6.4.3 | ✅ Pinned to 6.4.2 — **not affected** (LFI via `?import&raw` only; 6.4.2 patches the WebSocket vector) |
+| CVE-2026-39363 | vite | 8.2 (LFI via WebSocket) | 6.4.3 | ✅ **Bumped to 6.4.3** (commit `f2b7d67`) |
+| — | undici | HIGH (TLS bypass + WebSocket DoS) | 8.5.0 | ✅ **Bumped 8.4.1 → 8.5.0** (commit `f2b7d67`) |
 | CVE-2025-71176 | vitest | 9.8 | 4.1.8 | ✅ Pinned to 4.1.8 — the exact fix release |
 | — | archiver | — | 8.0.0 | ✅ Bumped 7.0.1 → 8.0.0 (upstream security bump) |
 | — | react-datepicker | — | 9.1.0 | ✅ Bumped 7.6.0 → 9.1.0 (upstream security bump) |
 | — | node-fetch | supply chain + SSRF risk | — | ✅ Removed entirely; native Node 22 `fetch` used instead |
+| — | js-yaml | moderate (jest transitive) | — | ⚠ Unfixable without breaking jest@29; accepted risk (dev-only) |
 
-**SSH deploy key:** `/workspace/extra/github-keys/github_deploy` (ed25519, comment: `nanoclaw-bot`). Copy to `~/.ssh/id_ed25519` before pushing.
+**SSH deploy key:** `/workspace/extra/github-keys/github_deploy` (ed25519, comment: `nanoclaw-bot`). Push command: `eval "$(ssh-agent -s)" && ssh-add /workspace/extra/github-keys/github_deploy && git push origin main`
 
 ---
 
