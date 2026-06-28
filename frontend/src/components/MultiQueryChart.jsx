@@ -9,6 +9,7 @@ import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import * as echarts from 'echarts'
 import { listQueries, createRun } from '../api/client.js'
 import { mergeDatasets, formatXLabel } from '../utils/mergeDatasets.js'
+import ResultFilters from './ResultFilters.jsx'
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -76,8 +77,8 @@ function ECharts({ option, style }) {
 
 // ─── Dataset entry ────────────────────────────────────────────────────────────
 
-function DatasetRow({ dataset, allColumns, onUpdate, onRemove, onRun }) {
-  const { name, xField, groupBy, aggregation, yMode, colDivisors, status, error } = dataset
+function DatasetRow({ dataset, allColumns, onUpdate, onRemove, onRun, addressLabels }) {
+  const { name, xField, groupBy, aggregation, yMode, colDivisors, status, error, activeFilters, rows } = dataset
 
   const cycleDivisor = useCallback((col) => {
     const cur = colDivisors?.[col] || 'raw'
@@ -160,6 +161,16 @@ function DatasetRow({ dataset, allColumns, onUpdate, onRemove, onRun }) {
           })}
         </div>
       )}
+
+      {/* Column value filters — same chip UI as the Results tab */}
+      {rows?.length > 0 && (
+        <ResultFilters
+          rows={rows}
+          activeFilters={activeFilters || {}}
+          onChange={filters => onUpdate({ activeFilters: filters })}
+          addressLabels={addressLabels}
+        />
+      )}
     </div>
   )
 }
@@ -210,7 +221,7 @@ function SeriesRow({ series, datasets, paletteColor, onUpdate, onRemove }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function MultiQueryChart({ startDate, endDate, colorSchemes = [] }) {
+export default function MultiQueryChart({ startDate, endDate, colorSchemes = [], addressLabels = [] }) {
   const [savedQueries, setSavedQueries] = useState([])
   const [queriesLoaded, setQueriesLoaded] = useState(false)
 
@@ -278,6 +289,7 @@ export default function MultiQueryChart({ startDate, endDate, colorSchemes = [] 
       rowCount: 0,
       error: null,
       lastColumns: ds.lastColumns || [],
+      activeFilters: ds.activeFilters || {},
     })))
     setSeriesList(config.seriesList || [])
     setConnectNulls(config.connectNulls ?? false)
@@ -305,6 +317,7 @@ export default function MultiQueryChart({ startDate, endDate, colorSchemes = [] 
       aggregation: 'sum',
       yMode: 'raw',
       colDivisors: {},
+      activeFilters: {},
       status: null,
       rows: null,
       rowCount: 0,
@@ -386,6 +399,13 @@ export default function MultiQueryChart({ startDate, endDate, colorSchemes = [] 
   // ── Compute merged data ─────────────────────────────────────────────────────
 
   const mergeInputs = useMemo(() => datasets.map((ds, idx) => {
+    // Pre-filter rows by the dataset's active column-value filters
+    let rows = ds.rows || []
+    const filterEntries = Object.entries(ds.activeFilters || {}).filter(([, vals]) => vals.length > 0)
+    if (filterEntries.length > 0) {
+      rows = rows.filter(row => filterEntries.every(([f, vals]) => vals.includes(String(row[f]))))
+    }
+
     const dsYFields = seriesList
       .filter(s => s.datasetIdx === idx && s.field)
       .map(s => s.field)
@@ -393,7 +413,7 @@ export default function MultiQueryChart({ startDate, endDate, colorSchemes = [] 
 
     return {
       id: ds.id,
-      rows: ds.rows || [],
+      rows,
       xField: ds.xField || '',
       yFields: dsYFields,
       colDivisors: ds.colDivisors || {},
@@ -592,6 +612,7 @@ export default function MultiQueryChart({ startDate, endDate, colorSchemes = [] 
               onUpdate={patch => updateDataset(idx, patch)}
               onRemove={() => removeDataset(idx)}
               onRun={() => runDataset(idx)}
+              addressLabels={addressLabels}
             />
           ))}
         </div>

@@ -583,6 +583,7 @@ export default function App() {
                 startDate={startDate}
                 endDate={endDate}
                 colorSchemes={colorSchemes}
+                addressLabels={addressLabels}
               />
             </div>
           )}
