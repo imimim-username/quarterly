@@ -147,16 +147,24 @@ function DatasetRow({ dataset, allColumns, onUpdate, onRemove, onRun, addressLab
         </label>
       </div>
 
-      {/* Divisor badges */}
+      {/* Divisor badges — click to cycle raw → ÷1e6 → ÷1e18 */}
       {allColumns.length > 0 && (
-        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontSize: 10, color: 'var(--color-text-muted)', marginRight: 2 }}>divisors:</span>
           {allColumns.filter(c => c !== xField).map(c => {
             const div = colDivisors?.[c] || 'raw'
+            const active = div !== 'raw'
             return (
-              <span key={c} onClick={() => cycleDivisor(c)} title="Click to cycle: raw → ÷1e6 → ÷1e18"
-                style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, cursor: 'pointer', border: '1px solid var(--color-border)', color: div !== 'raw' ? 'var(--color-accent)' : 'var(--color-text-muted)' }}>
-                {c} · {DIVISOR_LABELS[div]}
-              </span>
+              <button key={c} onClick={() => cycleDivisor(c)} title="Click to cycle: raw → ÷1e6 → ÷1e18"
+                style={{
+                  fontSize: 11, padding: '2px 7px', borderRadius: 3, cursor: 'pointer',
+                  border: '1px solid ' + (active ? 'var(--color-accent)' : 'var(--color-border)'),
+                  background: active ? 'var(--color-accent)' : 'var(--color-surface2)',
+                  color: active ? '#fff' : 'var(--color-text-muted)',
+                  fontWeight: active ? 600 : 400,
+                }}>
+                {c}{active ? ` ${DIVISOR_LABELS[div]}` : ''}
+              </button>
             )
           })}
         </div>
