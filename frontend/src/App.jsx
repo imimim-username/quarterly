@@ -85,6 +85,10 @@ export default function App() {
   }, [])
 
   const abortRef = useRef(null)
+  // Lazy-mount the Multi-Query Chart tab so its state survives tab switches.
+  // Once activated for the first time, keep it mounted (just hidden) forever.
+  const multiMounted = useRef(false)
+  if (tab === 'multi') multiMounted.current = true
 
   const handleSelectQuery = useCallback(async (query) => {
     setSelectedQuery(query)
@@ -572,10 +576,14 @@ export default function App() {
             </div>
           )}
 
-          {/* Multi-Query Chart tab */}
-          {tab === 'multi' && (
-            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'auto', padding: '4px 0' }}>
-              <MultiQueryChart />
+          {/* Multi-Query Chart tab — kept mounted after first visit so state survives tab switches */}
+          {multiMounted.current && (
+            <div style={{ display: tab === 'multi' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'auto', padding: '4px 0' }}>
+              <MultiQueryChart
+                startDate={startDate}
+                endDate={endDate}
+                colorSchemes={colorSchemes}
+              />
             </div>
           )}
 

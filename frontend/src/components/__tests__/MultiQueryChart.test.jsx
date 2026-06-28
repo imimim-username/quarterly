@@ -144,7 +144,8 @@ describe('MultiQueryChart — running a dataset', () => {
     fireEvent.change(screen.getAllByRole('combobox')[0], { target: { value: '1' } })
     fireEvent.click(screen.getByRole('button', { name: 'Run' }))
 
-    await waitFor(() => expect(createRun).toHaveBeenCalledWith({ query_id: 1 }))
+    // Component always passes start_date/end_date; both are null when no date props are provided
+    await waitFor(() => expect(createRun).toHaveBeenCalledWith({ query_id: 1, start_date: null, end_date: null }))
   })
 
   it('shows row count after a successful run', async () => {
