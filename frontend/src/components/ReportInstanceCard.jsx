@@ -432,11 +432,20 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
   // ── Expose generate() to parent via ref ──
   useImperativeHandle(ref, () => ({
     async generate() {
-      // Ensure preview is run
+      // Ensure card is expanded so MiniChart mounts and chartInstanceRef can be set
+      setExpanded(true)
+
+      // Ensure preview data is available
       if (runStatus !== 'done') {
         await runPreview()
       }
-      await new Promise(r => setTimeout(r, 300)) // let chart render
+
+      // Poll until ECharts instance is ready (React re-renders + MiniChart init).
+      // Timeout after 5 s — if still null, dataUrl will be null and the caller skips it.
+      for (let i = 0; i < 50; i++) {
+        await new Promise(r => setTimeout(r, 100))
+        if (chartInstanceRef.current) break
+      }
 
       let dataUrl = null
       if (chartInstanceRef.current) {

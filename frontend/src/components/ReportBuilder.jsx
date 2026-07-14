@@ -54,36 +54,16 @@ async function writePngToDir(dirHandle, filename, dataUrl) {
   await writable.close()
 }
 
-/** Fallback: pack all PNGs into a ZIP and trigger download. */
+/** Fallback: trigger individual browser downloads for each PNG. */
 async function downloadAsZip(pngs) {
-  // Dynamic import JSZip — bundled via npm
-  let JSZip
-  try {
-    const mod = await import('jszip')
-    JSZip = mod.default ?? mod
-  } catch {
-    // JSZip not available — download individually
-    for (const { dataUrl, filename } of pngs) {
-      const a = document.createElement('a')
-      a.href = dataUrl
-      a.download = filename
-      a.click()
-      await new Promise(r => setTimeout(r, 200))
-    }
-    return
-  }
-  const zip = new JSZip()
   for (const { dataUrl, filename } of pngs) {
-    const base64 = dataUrl.split(',')[1]
-    zip.file(filename, base64, { base64: true })
+    const a = document.createElement('a')
+    a.href = dataUrl
+    a.download = filename
+    a.click()
+    // Small delay so the browser can process each download before the next
+    await new Promise(r => setTimeout(r, 300))
   }
-  const blob = await zip.generateAsync({ type: 'blob' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `report-charts-${new Date().toISOString().slice(0,10)}.zip`
-  a.click()
-  URL.revokeObjectURL(url)
 }
 
 // ─── Temp instance ID counter (client-side only) ──────────────────────────────
@@ -313,12 +293,12 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
         setGenerating(false)
         return
       }
-      setGenStatus(`Packaging ${pngs.length} PNG${pngs.length > 1 ? 's' : ''} into ZIP…`)
+      setGenStatus(`Downloading ${pngs.length} PNG${pngs.length > 1 ? 's' : ''}…`)
       await downloadAsZip(pngs)
       setGenStatus(
         cancelled
           ? `Cancelled — downloaded ${pngs.length} PNG${pngs.length !== 1 ? 's' : ''} completed so far.`
-          : `✓ Downloaded ${pngs.length} PNG${pngs.length !== 1 ? 's' : ''} as ZIP.`
+          : `✓ Downloaded ${pngs.length} PNG${pngs.length !== 1 ? 's' : ''}.`
       )
     }
 
