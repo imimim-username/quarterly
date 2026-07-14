@@ -240,11 +240,6 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
     setGenStatus('Preparing…')
     setError('')
 
-    // Auto-save first
-    if (report?.id && name.trim()) {
-      try { await handleSave() } catch {}
-    }
-
     // Pick destination folder up-front so we can write each PNG immediately.
     // Fallback: accumulate in memory and ZIP at the end.
     const dirHandle = await pickDirectory()
