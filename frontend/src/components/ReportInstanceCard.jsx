@@ -369,13 +369,18 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
     }
   }, [onSave])
 
+  // Keep a ref to the latest config so patchConfig can compute next without
+  // reading stale closure values, and without calling onUpdate inside a state setter.
+  const configRef = useRef(config)
+  configRef.current = config
+
   // ── Persist changes ──
   const patchConfig = useCallback((patch) => {
-    setConfig(prev => {
-      const next = { ...prev, ...patch }
-      onUpdate?.({ config: next })
-      return next
-    })
+    const next = { ...configRef.current, ...patch }
+    setConfig(next)
+    // onUpdate must be called outside the state setter to avoid
+    // "Cannot update a component while rendering a different component"
+    onUpdate?.({ config: next })
   }, [onUpdate])
 
   const handleLabelBlur = () => onUpdate?.({ label })
@@ -417,10 +422,6 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
       setPreviewRows(rows)
       setRunStatus('done')
 
-      // Auto-save after a successful preview so configuration isn't lost
-      // Use setTimeout so state updates flush before the save reads them
-      if (onSave) setTimeout(() => handleSaveProgress(), 50)
-
       // Auto-set xField and leftFields from fieldMeta if not yet configured
       setConfig(prev => {
         const next = { ...prev }
@@ -441,7 +442,7 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
       setRunStatus('error')
       setRunError(e.message)
     }
-  }, [queryId, query, startDate, endDate, config.colDivisors, onSave, handleSaveProgress])
+  }, [queryId, query, startDate, endDate, config.colDivisors])
 
   // ── Expose generate() to parent via ref ──
   useImperativeHandle(ref, () => ({
