@@ -59,6 +59,7 @@ if (nativeAvailable) {
         id INTEGER PRIMARY KEY,
         name TEXT NOT NULL,
         description TEXT NOT NULL DEFAULT '',
+        config TEXT DEFAULT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT DEFAULT NULL
       );

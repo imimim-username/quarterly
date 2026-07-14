@@ -65,7 +65,9 @@ quarterly/                          npm workspace root
 │   │   │   ├── 005_computed_columns.js  ALTER queries ADD COLUMN computed_columns
 │   │   │   ├── 006_timestamp_extraction.js  ALTER queries ADD COLUMN timestamp_extraction
 │   │   │   ├── 007_color_schemes.js  color_schemes table + seed Default/Warm/Cool/Pastel
-│   │   │   └── 008_color_scheme_theme.js  ALTER color_schemes ADD COLUMN theme
+│   │   │   ├── 008_color_scheme_theme.js  ALTER color_schemes ADD COLUMN theme
+│   │   │   ├── 009_report_instances.js  report_instances table + ALTER reports ADD COLUMN updated_at
+│   │   │   └── 010_report_config.js  ALTER reports ADD COLUMN config
 │   │   └── routes/
 │   │       ├── settings.js
 │   │       ├── queries.js
@@ -88,7 +90,9 @@ quarterly/                          npm workspace root
 │       ├── runs.test.js
 │       ├── settings.test.js
 │       ├── colorSchemes.test.js
-│       └── endpoints.test.js
+│       ├── endpoints.test.js
+│       ├── reports.test.js
+│       └── date_filtering.test.js
 ├── frontend/
 │   ├── package.json                name: quarterly-frontend, version: 1.0.0
 │   ├── vite.config.js              dev proxy /api → http://127.0.0.1:8790
@@ -107,7 +111,7 @@ quarterly/                          npm workspace root
 │       │       ├── computedColumns.test.js   (115 tests)
 │       │       ├── timestampExtraction.test.js  (25 tests)
 │       │       └── mergeDatasets.test.js     (38 tests)
-│       └── components/             25 components (see §10)
+│       └── components/             27 components (see §10)
 │           ├── __tests__/          14 Vitest test files
 │           └── ...
 └── queries/
@@ -127,8 +131,8 @@ quarterly/                          npm workspace root
 |---|---|---|
 | Node.js | 22+ | runtime |
 | Express | 4.22.2 | HTTP server |
-| better-sqlite3 | 12.10.0 | SQLite driver (native C++ addon) |
-| csv-stringify | 6.7.0 | CSV generation |
+| better-sqlite3 | 12.11.2 | SQLite driver (native C++ addon) |
+| csv-stringify | 6.8.1 | CSV generation |
 | archiver | 8.0.0 | ZIP creation |
 | ipaddr.js | 2.4.0 | IP range classification for SSRF protection |
 | Jest | 29.7.0 | test runner |
@@ -143,7 +147,7 @@ quarterly/                          npm workspace root
 | React | 18.3.1 | UI framework |
 | Vite | 6.4.3 | build tool + dev server |
 | ECharts | 5.6.0 | charts |
-| @uiw/react-codemirror | 4.25.9 | GraphQL code editor |
+| @uiw/react-codemirror | 4.25.11 | GraphQL code editor |
 | @codemirror/lang-javascript | 6.2.5 | syntax highlighting |
 | @tanstack/react-virtual | 3.13.24 | virtual scrolling for large tables |
 | graphiql | 3.7.1 | embedded GraphQL explorer |
@@ -151,7 +155,7 @@ quarterly/                          npm workspace root
 | react-datepicker | 9.1.0 | date pickers |
 | expr-eval | 2.0.2 | safe arithmetic expression parser used internally (no eval/Function) — note: computed columns now use a custom built-in parser instead |
 | @uiw/react-color | (pinned) | Sketch color picker for color scheme editor |
-| Vitest | 4.1.8 | frontend test runner (upgraded from 3 to fix CVE-2026-47429) |
+| Vitest | 4.1.10 | frontend test runner (upgraded from 3 to fix CVE-2026-47429) |
 | @testing-library/react | 16.3.0 | component test helpers |
 | @testing-library/jest-dom | 6.6.3 | DOM matchers |
 
@@ -292,11 +296,49 @@ CREATE TABLE reports (
   id          INTEGER PRIMARY KEY,
   name        TEXT    NOT NULL,
   description TEXT    NOT NULL DEFAULT '',
-  created_at  TEXT    NOT NULL
+  config      TEXT    DEFAULT NULL,    -- JSON: { theme: { palette, bg, bgAlpha, textColor, gridColor, axisColor } } (added migration 010)
+  created_at  TEXT    NOT NULL,
+  updated_at  TEXT    DEFAULT NULL     -- added migration 009
 );
 ```
 
-### `report_queries`
+### `report_instances`
+```sql
+CREATE TABLE report_instances (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  report_id  INTEGER NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
+  query_id   INTEGER NOT NULL REFERENCES queries(id),
+  position   INTEGER NOT NULL DEFAULT 0,
+  label      TEXT    NOT NULL DEFAULT '',
+  config     TEXT    NOT NULL DEFAULT '{}',   -- JSON: full chart + filter config (see ReportInstanceCard)
+  created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+```
+
+**`config` JSON shape for `report_instances`:**
+```js
+{
+  xField: string,
+  leftFields: string[],
+  rightFields: string[],
+  leftType: 'line'|'bar'|'area',
+  rightType: 'line'|'bar'|'area',
+  groupBy: 'day'|'week'|'month'|'none',
+  leftYMode: 'raw'|'cumulative',
+  rightYMode: 'raw'|'cumulative',
+  leftAggregation: 'sum'|'mean'|'median'|'min'|'max',
+  rightAggregation: 'sum'|'mean'|'median'|'min'|'max',
+  leftScaleY: bool,
+  rightScaleY: bool,
+  xSortDir: 'asc'|'desc',
+  showLegend: bool,
+  colDivisors: { [col]: 'raw'|'1e6'|'1e18'|'datetime' },
+  seriesColors: { [col]: hex },   // per-series explicit overrides
+  activeFilters: { [col]: string[] },
+}
+```
+
+### `report_queries` *(legacy — kept for backward compat with old run history)*
 ```sql
 CREATE TABLE report_queries (
   report_id  INTEGER NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
@@ -306,7 +348,7 @@ CREATE TABLE report_queries (
 );
 ```
 
-### `report_runs`
+### `report_runs` *(legacy — kept for backward compat)*
 ```sql
 CREATE TABLE report_runs (
   id         INTEGER PRIMARY KEY,
@@ -318,7 +360,7 @@ CREATE TABLE report_runs (
 );
 ```
 
-### `report_run_queries`
+### `report_run_queries` *(legacy — kept for backward compat)*
 ```sql
 CREATE TABLE report_run_queries (
   report_run_id INTEGER NOT NULL REFERENCES report_runs(id) ON DELETE CASCADE,
@@ -417,8 +459,10 @@ Used by the migration runner. Tracks the highest applied migration number.
 | `006_timestamp_extraction.js` | 6 | `ALTER queries ADD COLUMN timestamp_extraction` |
 | `007_color_schemes.js` | 7 | `color_schemes` table + seed built-in schemes (Default, Warm, Cool, Pastel) |
 | `008_color_scheme_theme.js` | 8 | `ALTER color_schemes ADD COLUMN theme TEXT DEFAULT NULL` |
+| `009_report_instances.js` | 9 | `report_instances` table + `ALTER reports ADD COLUMN updated_at TEXT DEFAULT NULL` |
+| `010_report_config.js` | 10 | `ALTER reports ADD COLUMN config TEXT DEFAULT NULL` |
 
-**Adding a migration:** create `backend/src/migrations/009_my_change.js` with `module.exports = { up(db) { db.exec('...') } }`. It runs automatically on next server start.
+**Adding a migration:** create `backend/src/migrations/011_my_change.js` with `module.exports = { up(db) { db.exec('...') } }`. It runs automatically on next server start.
 
 ---
 
@@ -623,30 +667,49 @@ Returns 204. 404 if not found.
 ---
 
 ### `GET /api/reports`
-Returns all reports. Returns `{ data: [...] }`.
+Returns all reports ordered by name. `config` is JSON-parsed. Returns `{ data: [...] }`.
 
 ### `POST /api/reports`
-Body: `{ name, description? }`. Returns `{ data: newReport }` (201).
+Body: `{ name, description?, config? }`. `name` required. `config` is stored as `JSON.stringify(config)` if provided. Returns the new report object with `instances: []` (201).
 
 ### `GET /api/reports/:id`
-Returns report with full query list (`query_ids` array and parsed query objects). Returns `{ data: report }`.
+Returns report + all its instances. `config` parsed on report; each instance has its `config` JSON-parsed and a `query` sub-object with the full query definition (parsed JSON fields). Returns the report object with `instances` array.
+
+**Instance shape:**
+```js
+{
+  id, report_id, query_id, position, label, created_at,
+  config: { xField, leftFields, rightFields, ..., colDivisors, seriesColors, activeFilters },
+  query: { id, name, category, field_meta, variable_defs, gql, result_path, ... }
+}
+```
 
 ### `PUT /api/reports/:id`
-Updates `name`, `description`, and `query_ids` (deletes/reinserts `report_queries`). Returns `{ data: updatedReport }`.
+Body: `{ name?, description?, config? }`. Updates report metadata. If `config` is present, it overwrites the existing config; if omitted, existing config is preserved. Returns the updated report row (without instances). 404 if not found.
 
 ### `DELETE /api/reports/:id`
-Returns 204.
+Returns 204. 404 if not found. Cascade-deletes `report_instances`.
 
-### `POST /api/reports/:id/run`
-Body: `{ start_date?, end_date? }`.
-1. Creates `report_runs` record
-2. Inserts pending status rows in `report_run_queries` for each query
-3. Executes each query via `fetchAllPages`, saves run
-4. Updates `report_run_queries` status to `ok` or `failed`
-5. Returns `{ data: { report_run_id, statuses: [{ query_id, run_id, status, error_message }] } }`
+### `POST /api/reports/:id/instances`
+Body: `{ query_id, label?, config?, position? }`. `query_id` required; must reference existing query (400 if not). `position` auto-assigned (MAX+1) if omitted. Returns 201 with the new `report_instances` row (config JSON-parsed).
 
-### `GET /api/reports/runs/:id`
-Returns report run with per-query status. Returns `{ data: reportRun }`.
+### `PUT /api/reports/:id/instances/:iid`
+Body: `{ label?, config?, position? }`. Partial update — omitted fields preserve existing values. Returns updated instance (config JSON-parsed).
+
+### `DELETE /api/reports/:id/instances/:iid`
+Returns 204. 404 if not found or doesn't belong to the report.
+
+### `PUT /api/reports/:id/instances` *(bulk save)*
+Body: `{ instances: [{ query_id, label?, config?, position? }] }`. Replaces ALL instances for the report in a single transaction: deletes existing, inserts new. Validates all `query_id`s before starting the transaction (400 if any missing). Updates `reports.updated_at`. Returns the new instances array (config JSON-parsed).
+
+### `GET /api/reports/:id/runs` *(legacy)*
+Lists `report_runs` for a report. Kept for backward compat.
+
+### `GET /api/reports/runs/:report_run_id` *(legacy)*
+Returns a single `report_run` with per-query status from `report_run_queries`.
+
+### `POST /api/reports/:id/run` *(legacy)*
+Runs all queries in a report and saves the results. Uses `report_instances` if present, falls back to `report_queries` for old reports. Kept for backward compat.
 
 ---
 
@@ -1345,13 +1408,120 @@ Matches rows by `keyField`. For each numeric column, shows `valueA`, `valueB`, `
 
 ```jsx
 <ReportBuilder
-  report={object|null}       // null = create mode
-  onSave={fn}
+  report={object|null}       // null = create mode; object has .id, .name, .description, .config, .instances
+  onSave={fn}                // called with saved report object
   onClose={fn}
+  startDate={Date|null}      // forwarded to each ReportInstanceCard for preview runs
+  endDate={Date|null}
+  colorSchemes={array}       // all color scheme objects (from App)
+  addressLabels={array}      // for chip label resolution in instance filters
 />
 ```
 
-Manages name, description, query list with drag-to-reorder. Calls `createReport` or `updateReport`.
+**State:**
+- `name`, `description` — report metadata
+- `instances` — array of instance state objects (see `ReportInstanceCard` section for config shape)
+- `reportTheme` — current theme object (from `normaliseTheme(report?.config?.theme)`)
+- `generating` — bool, true while PNG generation is running
+- `themeEditorOpen` — bool, toggle for `ReportThemeEditor` panel
+
+**Behaviour:**
+- Uses `cardRefs` (`useRef({})`) to store `useImperativeHandle` refs keyed by `instance._tempId`. Each ref exposes a `generate()` method.
+- Floating **Save** FAB (bottom-right) calls `handleSave`, which calls `createReport`/`updateReport` then `bulkSaveReportInstances`. Passed `config: { theme: reportTheme }` in both create and update.
+- **Generate PNGs** button calls `handleGenerate`: iterates `cardRefs`, calls `ref.generate()` on each in sequence, collects `{ dataUrl, filename }` results, triggers individual `<a>.click()` downloads with 300 ms delay between them (no ZIP).
+- `handleSave` does NOT trigger a reload/remount — it calls `onSave(saved)` which only updates the report reference in `ReportsPanel` (no `setLoading`).
+- `ReportThemeEditor` is rendered as a collapsible panel above the instances list.
+- Each `ReportInstanceCard` receives `reportTheme`, `startDate`, `endDate`, `addressLabels`.
+- Color scheme selector: selects from `colorSchemes` prop; applying a scheme sets `reportTheme.palette` to the scheme's colors (merged via `normaliseTheme`).
+
+**`defaultReportTheme()` (module-level helper):**
+```js
+{
+  palette:   ['#e94560','#2196f3','#4caf50','#ff9800','#9c27b0','#00bcd4'],
+  bg:        '#1a1f2e',
+  bgAlpha:   100,          // 0–100 %
+  textColor: '#c0c0c0',
+  gridColor: '#333333',
+  axisColor: '#555555',
+}
+```
+
+**`normaliseTheme(partial)`** — merges `partial` with `defaultReportTheme()` using `Object.assign`. Ensures all keys always have values even when loading a report that has no saved theme.
+
+---
+
+### `ReportThemeEditor`
+
+```jsx
+<ReportThemeEditor
+  theme={object}             // current theme (normalised — all keys present)
+  onChange={fn}              // called with new theme object on every change
+/>
+```
+
+Collapsible panel (▼/▶ toggle). Controls:
+- **Series Colors** — ordered swatches; each opens a `<input type="color">` inline picker. Add (+) and remove (−) buttons.
+- **Background** — `<input type="color">` + hex text input. **Opacity** slider (0–100, maps to `bgAlpha`).
+- **Text Color**, **Grid Lines**, **Axis Lines** — each a `<input type="color">` + hex text input.
+- **Reset to Default** button — calls `onChange(defaultReportTheme())`.
+- **Export Theme** button — downloads `{ reportTheme: theme }` as `report-theme.json`.
+- **Import Theme** button — `<input type="file" accept=".json">` → parses JSON → calls `onChange(normaliseTheme(parsed.reportTheme ?? parsed))`.
+
+All changes call `onChange` immediately (live preview in charts).
+
+---
+
+### `ReportInstanceCard`
+
+```jsx
+<ReportInstanceCard
+  ref={cardRef}              // useImperativeHandle — exposes generate()
+  instance={object}          // { _tempId, id?, query_id, query, label, config, position }
+  reportTheme={object}       // normalised theme from ReportBuilder
+  startDate={Date|null}
+  endDate={Date|null}
+  addressLabels={array}
+  onChange={fn}              // called with updated instance object on config change
+  onRemove={fn}              // called with _tempId to remove from instances list
+/>
+```
+
+**State:**
+- `expanded` — bool (collapsed by default when `instance.id` exists; expanded for new instances)
+- `runStatus` — `null | 'running' | 'done' | 'error'`
+- `previewRows` — result rows from the preview run
+- `config` — chart config (xField, leftFields, rightFields, groupBy, seriesColors, colDivisors, activeFilters, etc.)
+- `chartInstanceRef` — ref to the ECharts instance from `MiniChart`
+
+**`useImperativeHandle` — `generate()` method:**
+1. Calls `setExpanded(true)` — ensures `MiniChart` is mounted (it only renders when expanded)
+2. If `runStatus !== 'done'`, awaits `runPreview()`
+3. Polls `chartInstanceRef.current` every 100 ms (up to 50 × = 5 s) until the ECharts instance is ready
+4. Calls `chartInstanceRef.current.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: hexToRgba(reportTheme.bg, reportTheme.bgAlpha) })`
+5. Returns `{ dataUrl, filename }` — `filename` from `buildFilename(query, label, config, startDate, endDate)`
+
+**`hexToRgba(hex, alpha)` (module-level):**
+```js
+function hexToRgba(hex, alpha) {
+  const h = hex.replace('#','')
+  const full = h.length === 3 ? h.split('').map(c=>c+c).join('') : h
+  const r = parseInt(full.slice(0,2),16)
+  const g = parseInt(full.slice(2,4),16)
+  const b = parseInt(full.slice(4,6),16)
+  return `rgba(${r},${g},${b},${(alpha ?? 100) / 100})`
+}
+```
+
+**`buildEChartsOption`** — applies full theme:
+- `backgroundColor: hexToRgba(reportTheme.bg, reportTheme.bgAlpha)`
+- `textStyle.color`, `legend.textStyle.color` → `reportTheme.textColor`
+- Both axes: `axisLine.lineStyle.color`, `axisTick.lineStyle.color`, `axisLabel.color` → `reportTheme.axisColor` / `reportTheme.textColor`
+- Both yAxis: `splitLine.lineStyle.color` → `reportTheme.gridColor`
+- Series color fallback: `reportTheme.palette[(colorOffset+i) % palette.length]`
+
+**`MiniChart`** sub-component: renders the ECharts instance for the preview run. Uses `onInstance(chart)` callback (→ `chartInstanceRef.current`) on mount, `onInstance(null)` on unmount cleanup. Only rendered when `expanded === true` — hence the poll in `generate()`.
+
+**`__right` alias suffix:** fields that appear on both Y axes get an `__right` suffix in the series key to avoid collision. ECharts legend shows them as `"fieldName (R)"`.
 
 ---
 
@@ -1361,12 +1531,18 @@ Manages name, description, query list with drag-to-reorder. Calls `createReport`
 <ReportsPanel
   startDate={Date|null}
   endDate={Date|null}
+  colorSchemes={array}
+  addressLabels={array}
 />
 ```
 
-Internal state: `reports`, `selectedReport`, `reportRun`, `pinnedReportRunId`, `compareReportRunIds`.
+Internal state: `reports`, `selectedReport`, `loading`, `refresh`.
 
-Lists reports on the left, shows report details and run history on the right. "Run" button calls `runReport(id, { start_date, end_date })`. "Compare" on two report runs opens `<ReportCompareView>` as an overlay.
+Lists reports in a left sidebar. Right pane shows `ReportBuilder` for the selected report (or create-new form). When `loading` is true (triggered by `setLoading(true)`), a "Loading report…" placeholder replaces `ReportBuilder` — which unmounts it completely.
+
+**`handleSave(report)` callback** (passed as `onSave` to `ReportBuilder`): only calls `setSelectedReport(prev => ({ ...prev, ...report }))`. Does NOT increment `refresh` or trigger a reload — this avoids the unmount/remount cycle that would clear all `cardRefs` in `ReportBuilder`.
+
+**`refresh` state** is only incremented explicitly (e.g., when a report is deleted and re-selected). The `useEffect([selectedReport?.id, refresh])` that sets `loading = true` is guarded to only fire when the ID changes or refresh is explicitly incremented.
 
 ---
 
@@ -1380,7 +1556,7 @@ Lists reports on the left, shows report details and run history on the right. "R
 />
 ```
 
-Fetches both report runs via `getReportRun`. Side-by-side per-query status comparison.
+Fetches both report runs via `getReportRun`. Side-by-side per-query status comparison. (Legacy component — only used for old-style `report_runs`.)
 
 ---
 
@@ -1513,12 +1689,20 @@ patchRun(id, body)
 // Reports
 listReports()
 getReport(id)
-createReport(body)
-updateReport(id, body)
+createReport(body)              // body: { name, description?, config? }
+updateReport(id, body)          // body: { name?, description?, config? }
 deleteReport(id)
-runReport(id, body)
-getReportRun(reportRunId)
-listReportRuns(reportId)
+
+// Report instances
+addReportInstance(reportId, body)                    // POST /api/reports/:id/instances
+updateReportInstance(reportId, instanceId, body)     // PUT /api/reports/:id/instances/:iid
+deleteReportInstance(reportId, instanceId)           // DELETE /api/reports/:id/instances/:iid
+bulkSaveReportInstances(reportId, instances)         // PUT /api/reports/:id/instances  ← primary save path
+
+// Legacy report runs (kept for backward compat)
+runReport(id, body)             // POST /api/reports/:id/run
+getReportRun(reportRunId)       // GET /api/reports/runs/:id
+listReportRuns(reportId)        // GET /api/reports/:id/runs
 
 // Address labels
 listAddressLabels()
@@ -1581,6 +1765,35 @@ Each descriptor:
 **`formatXLabel(key, groupBy)`** — formats a unix-seconds bucket key as a human-readable date string. Keys > 946684800 (year 2000) are formatted as dates; others are stringified as-is.
 
 **Type-compatible X alignment:** both datasets are bucketed with the same `groupBy` before joining. Timestamps in dataset A and B don't have to match exactly — they just need to be unix timestamps so `bucketTimestamp` maps them to the same bucket.
+
+---
+
+### Reports architecture
+
+The Reports tab uses an **instance-based architecture** where each chart in a report is a `report_instances` row with its own chart config JSON.
+
+**Save flow (`ReportBuilder.handleSave`):**
+1. Calls `createReport` or `updateReport` with `{ name, description, config: { theme: reportTheme } }`
+2. Calls `bulkSaveReportInstances(id, instances)` — replaces all instances in one transaction
+3. Calls `onSave(saved)` — `ReportsPanel.handleSave` updates `selectedReport` state only (no reload)
+
+The critical design constraint: `ReportBuilder` must NOT be unmounted between save and PNG generation, because all `cardRefs` are cleared on unmount. `ReportsPanel.handleSave` therefore avoids any state changes that would cause a loading→remount cycle.
+
+**Generate PNGs flow (`ReportBuilder.handleGenerate`):**
+1. Iterates `cardRefs.current` entries
+2. For each ref, calls `await ref.generate()` — see `ReportInstanceCard` section
+3. Collects `{ dataUrl, filename }` objects (skips null `dataUrl`)
+4. For each result, creates `<a href=dataUrl download=filename>` and calls `.click()` with 300 ms between
+5. Shows "No charts could be generated" if all refs returned null
+
+**Why cards start collapsed:** saved instances (`instance.id` exists) initialize `expanded = false`. A collapsed card has `MiniChart` unmounted → `chartInstanceRef.current = null` → `getDataURL` cannot be called. The `generate()` method calls `setExpanded(true)` first, then polls until `chartInstanceRef.current` is non-null (up to 5 s).
+
+**Theme system:**
+- `defaultReportTheme()` provides baseline colors for new reports
+- `normaliseTheme(partial)` merges user-saved or scheme-derived partial into defaults
+- `reportTheme` is persisted as `reports.config.theme` (via `bulkSaveReportInstances` → `updateReport` via `handleSave`)
+- On report load: `setReportTheme(normaliseTheme(report?.config?.theme))` — missing keys fill from defaults
+- Color scheme selector in `ReportBuilder`: applies scheme palette to `reportTheme.palette`; does not overwrite bg/textColor/etc.
 
 ---
 
@@ -1761,13 +1974,22 @@ Common patterns:
 - DELETE: normal delete; cannot delete default (400); 404 not found
 - POST `/set-default`: sets default, clears others; 404 not found
 
+**`reports.test.js`** (37 tests) — `makeDb()` includes `reports` table with `config TEXT DEFAULT NULL` and `updated_at TEXT DEFAULT NULL`; `report_instances` table; `queries` and `report_queries`/`report_runs`/`report_run_queries` for backward-compat routes. Covers:
+- CRUD on reports (create, get, update, delete, 404 cases)
+- `config` round-trip (create with config, update config, omit config preserves existing)
+- Instance add (`POST /instances`): auto-position, explicit position, 400 on missing query
+- Instance update (`PUT /instances/:iid`): partial update, config update
+- Instance delete (`DELETE /instances/:iid`)
+- Bulk save (`PUT /instances`): replaces all, validates query_ids pre-transaction
+- Legacy routes: `GET /runs`, `GET /runs/:id`
+
 ### Frontend (Vitest)
 
 Run: `npm test --workspace=frontend`
 
 Config: `vitest.config.js` with `environment: 'jsdom'`, `setupFiles: ['@testing-library/jest-dom/vitest']`.
 
-**14 test files, 258 tests total:**
+**14 test files, 258 tests total (as of 2026-07-14):**
 
 | File | Tests | Coverage |
 |---|---|---|
@@ -1786,7 +2008,9 @@ Config: `vitest.config.js` with `environment: 'jsdom'`, `setupFiles: ['@testing-
 | `components/__tests__/SchemaExplorer.test.jsx` | ~4 | GraphiQL embed, "Use This Query" button |
 | `components/__tests__/EndpointProfilesModal.test.jsx` | ~4 | Profile list, create, select, delete |
 
-**Grand total: ~304 tests (258 frontend Vitest + 46 backend Jest)**
+**Grand total: ~476 tests (258 frontend Vitest + 211 backend Jest passing + 7 skipped)**
+
+Backend test counts: 10 test files, 218 total (211 passing + 7 skipped integration tests gated by `process.env.INTEGRATION`). The 7 skipped tests in `runs.test.js` / `ponder.test.js` require a live Ponder endpoint.
 
 **Important:** run Vitest from `frontend/` directory, not repo root. Root `package.json` `test` script only runs backend Jest.
 
@@ -1863,18 +2087,21 @@ CSS class patterns used:
 
 ## 16. Dependency Security Notes
 
-Last audited: **2026-06-28** (commits `f2b7d67`, `8e5639f`).
+Last audited: **2026-07-14**.
 
 `npm audit` reports **0 vulnerabilities** across all workspaces. The following were investigated via NVD and GitHub advisories in addition to the npm advisory database:
 
 | CVE | Package | CVSS | Fixed in | Status |
 |---|---|---|---|---|
-| CVE-2026-39363 | vite | 8.2 (LFI via WebSocket) | 6.4.3 | ✅ **Bumped to 6.4.3** (commit `f2b7d67`) |
-| — | undici | HIGH (TLS bypass + WebSocket DoS) | 8.5.0 | ✅ **Bumped 8.4.1 → 8.5.0** (commit `f2b7d67`) |
-| CVE-2025-71176 | vitest | 9.8 | 4.1.8 | ✅ Pinned to 4.1.8 — the exact fix release |
-| — | archiver | — | 8.0.0 | ✅ Bumped 7.0.1 → 8.0.0 (upstream security bump) |
-| — | react-datepicker | — | 9.1.0 | ✅ Bumped 7.6.0 → 9.1.0 (upstream security bump) |
+| CVE-2026-39363 | vite | 8.2 (LFI via WebSocket) | 6.4.3 | ✅ Pinned to 6.4.3 |
+| — | undici | HIGH (TLS bypass + WebSocket DoS) | 8.5.0 | ✅ Bumped to 8.7.0 |
+| CVE-2025-71176 | vitest | 9.8 | 4.1.8 | ✅ Pinned to 4.1.10 (latest fix series) |
+| — | archiver | — | 8.0.0 | ✅ Pinned to 8.0.0 |
+| — | react-datepicker | — | 9.1.0 | ✅ Pinned to 9.1.0 |
 | — | node-fetch | supply chain + SSRF risk | — | ✅ Removed entirely; native Node 22 `fetch` used instead |
+| — | better-sqlite3 | — | 12.11.2 | ✅ Pinned to 12.11.2 |
+| — | csv-stringify | — | 6.8.1 | ✅ Pinned to 6.8.1 |
+| — | jszip | — | — | ✅ Removed from package.json — not used (PNG download uses individual `<a>.click()`) |
 | — | js-yaml | moderate (jest transitive) | — | ⚠ Unfixable without breaking jest@29; accepted risk (dev-only) |
 
 **SSH deploy key:** `/workspace/extra/github-keys/github_deploy` (ed25519, comment: `nanoclaw-bot`). Push command: `eval "$(ssh-agent -s)" && ssh-add /workspace/extra/github-keys/github_deploy && git push origin main`
