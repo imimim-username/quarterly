@@ -9,6 +9,20 @@ import ResultFilters from './ResultFilters.jsx'
 
 // ─── Chart helpers (mirrors ResultsChart logic) ───────────────────────────────
 
+// ─── Theme helpers ────────────────────────────────────────────────────────────
+
+/** Convert a 3- or 6-digit hex color + 0-100 alpha into an rgba() string. */
+function hexToRgba(hex, alpha) {
+  if (!hex || typeof hex !== 'string') return `rgba(26,31,46,${(alpha ?? 100) / 100})`
+  const h = hex.replace('#', '')
+  const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h
+  if (full.length !== 6) return `rgba(26,31,46,${(alpha ?? 100) / 100})`
+  const r = parseInt(full.slice(0, 2), 16)
+  const g = parseInt(full.slice(2, 4), 16)
+  const b = parseInt(full.slice(4, 6), 16)
+  return `rgba(${r},${g},${b},${(alpha ?? 100) / 100})`
+}
+
 const CHART_TYPES = ['bar', 'line', 'area']
 const GROUP_BY_OPTIONS = ['none', 'day', 'week', 'month']
 const AGG_OPTIONS = ['sum', 'avg', 'median', 'min', 'max', 'count']
@@ -94,7 +108,13 @@ function fmtXLabel(val, groupBy, xField) {
   return String(val)
 }
 
-function buildEChartsOption(chartData, leftFields, rightFields, leftType, rightType, fieldMeta, seriesColors, palette, showLegend, groupBy, xField, leftScaleY = false, rightScaleY = false) {
+function buildEChartsOption(chartData, leftFields, rightFields, leftType, rightType, fieldMeta, seriesColors, reportTheme, showLegend, groupBy, xField, leftScaleY = false, rightScaleY = false) {
+  const palette   = reportTheme?.palette   ?? FALLBACK_COLORS
+  const textColor = reportTheme?.textColor ?? '#c0c0c0'
+  const gridColor = reportTheme?.gridColor ?? '#333333'
+  const axisColor = reportTheme?.axisColor ?? '#555555'
+  const bgRgba    = hexToRgba(reportTheme?.bg ?? '#1a1f2e', reportTheme?.bgAlpha ?? 100)
+
   const xLabels = chartData.map(p => fmtXLabel(p.x, groupBy, xField))
 
   const makeSeries = (fields, yAxisIdx, type, colorOffset) =>
@@ -102,7 +122,7 @@ function buildEChartsOption(chartData, leftFields, rightFields, leftType, rightT
       // rightFields may contain aliased names like "amount__right" when the same
       // field is used on both axes; resolve back to the base name for meta/color lookup
       const baseField = f.replace(/__right$/, '')
-      const color = seriesColors[baseField] ?? palette[(colorOffset+i)%palette.length]
+      const color = seriesColors[baseField] ?? palette[(colorOffset + i) % palette.length]
       const baseLabel = fieldMeta[baseField]?.label || baseField
       const label = f.endsWith('__right') ? `${baseLabel} (R)` : baseLabel
       return {
@@ -110,37 +130,60 @@ function buildEChartsOption(chartData, leftFields, rightFields, leftType, rightT
         type: type === 'area' ? 'line' : type,
         yAxisIndex: yAxisIdx,
         data: chartData.map(p => p[f] ?? null),
-        areaStyle: type==='area' ? {opacity:0.25} : undefined,
-        smooth: type!=='bar',
+        areaStyle: type === 'area' ? { opacity: 0.25 } : undefined,
+        smooth: type !== 'bar',
         color,
-        lineStyle: {width:2},
-        symbol: chartData.length>100 ? 'none' : 'circle',
+        lineStyle: { width: 2 },
+        symbol: chartData.length > 100 ? 'none' : 'circle',
         symbolSize: 4,
         connectNulls: false,
       }
     })
 
+  const axisLabelStyle = { formatter: fmtAxisVal, fontSize: 10, color: textColor }
+  const axisLineStyle  = { lineStyle: { color: axisColor } }
+
   const yAxes = [
-    { type:'value', axisLabel:{formatter:fmtAxisVal}, splitLine:{lineStyle:{color:'#333'}}, scale:leftScaleY },
+    {
+      type: 'value',
+      axisLabel: axisLabelStyle,
+      axisLine: axisLineStyle,
+      axisTick: axisLineStyle,
+      splitLine: { lineStyle: { color: gridColor } },
+      scale: leftScaleY,
+    },
   ]
   if (rightFields.length > 0) {
-    yAxes.push({ type:'value', axisLabel:{formatter:fmtAxisVal}, splitLine:{show:false}, scale:rightScaleY })
+    yAxes.push({
+      type: 'value',
+      axisLabel: axisLabelStyle,
+      axisLine: axisLineStyle,
+      axisTick: axisLineStyle,
+      splitLine: { show: false },
+      scale: rightScaleY,
+    })
   }
 
   return {
-    backgroundColor: 'transparent',
-    legend: showLegend ? { show:true, top:4, textStyle:{fontSize:10} } : { show:false },
-    grid: { left:52, right:rightFields.length>0?52:12, top:showLegend?36:12, bottom:40, containLabel:false },
-    tooltip: { trigger:'axis', axisPointer:{type:'cross'} },
+    backgroundColor: bgRgba,
+    textStyle: { color: textColor },
+    legend: showLegend
+      ? { show: true, top: 4, textStyle: { fontSize: 10, color: textColor } }
+      : { show: false },
+    grid: { left: 52, right: rightFields.length > 0 ? 52 : 12, top: showLegend ? 36 : 12, bottom: 40, containLabel: false },
+    tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
     xAxis: {
-      type:'category', data:xLabels,
-      axisLabel: { rotate: xLabels.length>20?30:0, fontSize:10 },
-      splitLine: { show:false },
+      type: 'category',
+      data: xLabels,
+      axisLabel: { rotate: xLabels.length > 20 ? 30 : 0, fontSize: 10, color: textColor },
+      axisLine: axisLineStyle,
+      axisTick: axisLineStyle,
+      splitLine: { show: false },
     },
     yAxis: yAxes,
     series: [
       ...makeSeries(leftFields, 0, leftType, 0),
-      ...makeSeries(rightFields, rightFields.length>0?1:0, rightType, leftFields.length),
+      ...makeSeries(rightFields, rightFields.length > 0 ? 1 : 0, rightType, leftFields.length),
     ],
   }
 }
@@ -221,7 +264,7 @@ export function defaultInstanceConfig() {
  *    Runs a preview if needed, then returns the chart PNG and a suggested filename.
  */
 const ReportInstanceCard = forwardRef(function ReportInstanceCard(
-  { instance, allQueries, startDate, endDate, onUpdate, onDelete, palette, addressLabels = [] },
+  { instance, allQueries, startDate, endDate, onUpdate, onDelete, reportTheme, addressLabels = [] },
   ref,
 ) {
   const [expanded, setExpanded] = useState(!instance.id) // new instances start expanded
@@ -301,14 +344,14 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
       config.rightType,
       fieldMeta,
       config.seriesColors ?? {},
-      palette ?? FALLBACK_COLORS,
+      reportTheme,
       config.showLegend,
       config.groupBy,
       config.xField,
       config.leftScaleY ?? false,
       config.rightScaleY ?? false,
     ),
-    [mergedChartData, effectiveRightFields, config, fieldMeta, palette]
+    [mergedChartData, effectiveRightFields, config, fieldMeta, reportTheme]
   )
 
   // ── Persist changes ──
@@ -392,10 +435,11 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
 
       let dataUrl = null
       if (chartInstanceRef.current) {
+        const bgColor = hexToRgba(reportTheme?.bg ?? '#1a1f2e', reportTheme?.bgAlpha ?? 100)
         dataUrl = chartInstanceRef.current.getDataURL({
           type: 'png',
           pixelRatio: 2,
-          backgroundColor: '#1a1f2e',
+          backgroundColor: bgColor,
         })
       }
 
@@ -404,7 +448,7 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
     },
     getLabel: () => label,
     getQueryName: () => query?.name ?? '',
-  }), [runPreview, runStatus, query, label, config, startDate, endDate])
+  }), [runPreview, runStatus, query, label, config, startDate, endDate, reportTheme])
 
   const q = allQueries.find(q => q.id === Number(queryId))
   const queryDisplayName = q ? `${q.category} / ${q.name}` : '— select query —'

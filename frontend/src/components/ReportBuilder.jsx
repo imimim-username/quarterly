@@ -1,6 +1,33 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { listQueries, createReport, updateReport, deleteReport, bulkSaveReportInstances, listColorSchemes } from '../api/client.js'
 import ReportInstanceCard, { defaultInstanceConfig } from './ReportInstanceCard.jsx'
+import ReportThemeEditor from './ReportThemeEditor.jsx'
+
+// ─── Report-level theme helpers ───────────────────────────────────────────────
+
+export function defaultReportTheme() {
+  return {
+    palette:   ['#e94560', '#2196f3', '#4caf50', '#ff9800', '#9c27b0', '#00bcd4'],
+    bg:        '#1a1f2e',
+    bgAlpha:   100,
+    textColor: '#c0c0c0',
+    gridColor: '#333333',
+    axisColor: '#555555',
+  }
+}
+
+function normaliseTheme(partial) {
+  const defaults = defaultReportTheme()
+  if (!partial || typeof partial !== 'object') return defaults
+  return {
+    ...defaults,
+    ...partial,
+    palette: Array.isArray(partial.palette) && partial.palette.length
+      ? partial.palette
+      : defaults.palette,
+    bgAlpha: typeof partial.bgAlpha === 'number' ? partial.bgAlpha : defaults.bgAlpha,
+  }
+}
 
 // ─── PNG generation helpers ───────────────────────────────────────────────────
 
@@ -80,7 +107,7 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
   const [description, setDescription] = useState(report?.description ?? '')
   const [instances, setInstances] = useState(() => normaliseInstances(report?.instances ?? []))
   const [allQueries, setAllQueries] = useState([])
-  const [palette, setPalette] = useState(['#e94560','#2196f3','#4caf50','#ff9800','#9c27b0','#00bcd4'])
+  const [reportTheme, setReportTheme] = useState(() => normaliseTheme(report?.config?.theme))
   const [saving, setSaving] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [genStatus, setGenStatus] = useState('') // progress text
@@ -95,15 +122,20 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
 
   useEffect(() => {
     listQueries().then(({ data }) => setAllQueries(Array.isArray(data) ? data : []))
+    // Only apply the default color scheme if this report has no saved theme
     listColorSchemes().then(({ data }) => {
+      if (report?.config?.theme) return // already has a saved theme
       const schemes = Array.isArray(data) ? data : []
       const def = schemes.find(s => s.is_default) ?? schemes[0]
-      if (def) {
-        try {
-          const colors = typeof def.colors === 'string' ? JSON.parse(def.colors) : def.colors
-          if (Array.isArray(colors) && colors.length) setPalette(colors)
-        } catch {}
-      }
+      if (!def) return
+      try {
+        const colors = typeof def.colors === 'string' ? JSON.parse(def.colors) : def.colors
+        let schemeTheme = {}
+        try { schemeTheme = def.theme ? (typeof def.theme === 'string' ? JSON.parse(def.theme) : def.theme) : {} } catch {}
+        const patch = { ...schemeTheme }
+        if (Array.isArray(colors) && colors.length) patch.palette = colors
+        setReportTheme(t => normaliseTheme({ ...t, ...patch }))
+      } catch {}
     })
   }, [])
 
@@ -112,6 +144,7 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
     setName(report?.name ?? '')
     setDescription(report?.description ?? '')
     setInstances(normaliseInstances(report?.instances ?? []))
+    setReportTheme(normaliseTheme(report?.config?.theme))
     setError('')
     setGenStatus('')
     cardRefs.current = {}
@@ -125,7 +158,7 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
     try {
       let saved
       if (report?.id) {
-        const r = await updateReport(report.id, { name: name.trim(), description })
+        const r = await updateReport(report.id, { name: name.trim(), description, config: { theme: reportTheme } })
         if (!r.ok) throw new Error(r.data?.message || 'Save failed.')
         saved = r.data
         // Bulk-save instances
@@ -139,7 +172,7 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
         if (!ir.ok) throw new Error(ir.data?.message || 'Failed to save instances.')
       } else {
         // Create new
-        const r = await createReport({ name: name.trim(), description })
+        const r = await createReport({ name: name.trim(), description, config: { theme: reportTheme } })
         if (!r.ok) throw new Error(r.data?.message || 'Create failed.')
         saved = r.data
         const payload = instances.map((inst, idx) => ({
@@ -354,6 +387,13 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
         </div>
       )}
 
+      {/* Chart theme editor */}
+      <ReportThemeEditor
+        theme={reportTheme}
+        onChange={setReportTheme}
+        defaultTheme={defaultReportTheme()}
+      />
+
       {/* Query picker dropdown */}
       {showQueryPicker && (
         <div style={{
@@ -419,7 +459,7 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
               allQueries={allQueries}
               startDate={startDate}
               endDate={endDate}
-              palette={palette}
+              reportTheme={reportTheme}
               addressLabels={addressLabels}
               onUpdate={patch => updateInstance(inst._tempId, patch)}
               onDelete={() => deleteInstance(inst._tempId)}

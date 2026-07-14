@@ -22,6 +22,12 @@ function parseInstance(row) {
   return { ...row, config };
 }
 
+function parseReport(row) {
+  let config;
+  try { config = row.config ? JSON.parse(row.config) : null; } catch { config = null; }
+  return { ...row, config };
+}
+
 function resolveVariables(queryDef, startDate, endDate) {
   let varDefs;
   try { varDefs = JSON.parse(queryDef.variable_defs); } catch { return { variables_base: {} }; }
@@ -57,7 +63,7 @@ module.exports = function reportsRoutes(db) {
   router.get('/', (req, res) => {
     try {
       const reports = db.prepare('SELECT * FROM reports ORDER BY name').all();
-      res.json(reports);
+      res.json(reports.map(parseReport));
     } catch (e) {
       res.status(500).json({ error: 'db_error', message: e.message });
     }
@@ -65,17 +71,18 @@ module.exports = function reportsRoutes(db) {
 
   // ── Create report ───────────────────────────────────────────────────────
   router.post('/', (req, res) => {
-    const { name, description = '' } = req.body || {};
+    const { name, description = '', config } = req.body || {};
     if (!name || typeof name !== 'string' || !name.trim()) {
       return res.status(400).json({ error: 'validation_error', message: 'name is required.' });
     }
     const now = new Date().toISOString();
+    const configJson = config != null ? JSON.stringify(config) : null;
     try {
       const info = db.prepare(
-        'INSERT INTO reports (name, description, created_at, updated_at) VALUES (?, ?, ?, ?)'
-      ).run(name.trim(), description, now, now);
+        'INSERT INTO reports (name, description, config, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'
+      ).run(name.trim(), description, configJson, now, now);
       const report = db.prepare('SELECT * FROM reports WHERE id = ?').get(info.lastInsertRowid);
-      res.status(201).json({ ...report, instances: [] });
+      res.status(201).json({ ...parseReport(report), instances: [] });
     } catch (e) {
       res.status(500).json({ error: 'db_error', message: e.message });
     }
@@ -125,25 +132,29 @@ module.exports = function reportsRoutes(db) {
                  config, query };
       });
 
-      res.json({ ...report, instances });
+      res.json({ ...parseReport(report), instances });
     } catch (e) {
       res.status(500).json({ error: 'db_error', message: e.message });
     }
   });
 
-  // ── Update report (name, description, reorder instances) ────────────────
+  // ── Update report (name, description, config) ───────────────────────────
   router.put('/:id(\\d+)', (req, res) => {
     try {
       const existing = db.prepare('SELECT * FROM reports WHERE id = ?').get(req.params.id);
       if (!existing) return res.status(404).json({ error: 'not_found', message: 'Report not found.' });
 
-      const { name = existing.name, description = existing.description } = req.body || {};
+      const { name = existing.name, description = existing.description, config } = req.body || {};
       const now = new Date().toISOString();
-      db.prepare('UPDATE reports SET name=?, description=?, updated_at=? WHERE id=?')
-        .run(name, description, now, req.params.id);
+      // Only overwrite config if explicitly provided; preserve existing value otherwise
+      const configJson = config !== undefined
+        ? (config != null ? JSON.stringify(config) : null)
+        : existing.config;
+      db.prepare('UPDATE reports SET name=?, description=?, config=?, updated_at=? WHERE id=?')
+        .run(name, description, configJson, now, req.params.id);
 
       const updated = db.prepare('SELECT * FROM reports WHERE id = ?').get(req.params.id);
-      res.json(updated);
+      res.json(parseReport(updated));
     } catch (e) {
       res.status(500).json({ error: 'db_error', message: e.message });
     }
