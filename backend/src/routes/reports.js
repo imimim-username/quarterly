@@ -232,6 +232,18 @@ module.exports = function reportsRoutes(db) {
       if (!report) return res.status(404).json({ error: 'not_found', message: 'Report not found.' });
 
       const { instances = [] } = req.body || {};
+
+      // Validate all query_ids before starting the transaction
+      for (const inst of instances) {
+        if (!inst.query_id) {
+          return res.status(400).json({ error: 'validation_error', message: 'Each instance must have a query_id.' });
+        }
+        const q = db.prepare('SELECT id FROM queries WHERE id = ?').get(inst.query_id);
+        if (!q) {
+          return res.status(400).json({ error: 'validation_error', message: `Query with id ${inst.query_id} not found.` });
+        }
+      }
+
       const now = new Date().toISOString();
 
       const save = db.transaction(() => {

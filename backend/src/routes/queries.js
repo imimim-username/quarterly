@@ -255,6 +255,12 @@ module.exports = function queriesRoutes(db) {
       db.prepare('DELETE FROM queries WHERE id = ?').run(req.params.id);
       res.status(204).end();
     } catch (e) {
+      if (e.message && e.message.includes('FOREIGN KEY constraint failed')) {
+        return res.status(409).json({
+          error: 'constraint_error',
+          message: 'This query is used by one or more reports. Remove it from all reports before deleting.',
+        });
+      }
       res.status(500).json({ error: 'db_error', message: e.message });
     }
   });

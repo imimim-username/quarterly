@@ -93,7 +93,7 @@ function fmtXLabel(val, groupBy, xField) {
   return String(val)
 }
 
-function buildEChartsOption(chartData, leftFields, rightFields, leftType, rightType, fieldMeta, seriesColors, palette, showLegend, groupBy, xField) {
+function buildEChartsOption(chartData, leftFields, rightFields, leftType, rightType, fieldMeta, seriesColors, palette, showLegend, groupBy, xField, leftScaleY = false, rightScaleY = false) {
   const allFields = [...leftFields, ...rightFields]
   const xLabels = chartData.map(p => fmtXLabel(p.x, groupBy, xField))
 
@@ -117,10 +117,10 @@ function buildEChartsOption(chartData, leftFields, rightFields, leftType, rightT
     })
 
   const yAxes = [
-    { type:'value', axisLabel:{formatter:fmtAxisVal}, splitLine:{lineStyle:{color:'#333'}}, scale:false },
+    { type:'value', axisLabel:{formatter:fmtAxisVal}, splitLine:{lineStyle:{color:'#333'}}, scale:leftScaleY },
   ]
   if (rightFields.length > 0) {
-    yAxes.push({ type:'value', axisLabel:{formatter:fmtAxisVal}, splitLine:{show:false}, scale:false })
+    yAxes.push({ type:'value', axisLabel:{formatter:fmtAxisVal}, splitLine:{show:false}, scale:rightScaleY })
   }
 
   return {
@@ -276,7 +276,6 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
   const filteredRows = useMemo(() => filterRows(previewRows, config.activeFilters), [previewRows, config.activeFilters])
 
   // ── Chart data ──
-  const allYFields = [...(config.leftFields ?? []), ...(config.rightFields ?? [])]
   const chartDataLeft = useMemo(() =>
     buildChartData(filteredRows, config.xField, config.leftFields ?? [], config.colDivisors ?? {}, config.groupBy, config.leftYMode, config.leftAggregation, config.xSortDir),
     [filteredRows, config.xField, config.leftFields, config.colDivisors, config.groupBy, config.leftYMode, config.leftAggregation, config.xSortDir]
@@ -294,11 +293,12 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
       if (map.has(p.x)) Object.assign(map.get(p.x), p)
       else map.set(p.x, { ...p })
     }
-    return [...map.values()].sort((a,b)=>{
+    const sorted = [...map.values()].sort((a,b)=>{
       const an=Number(a.x),bn=Number(b.x)
       return (!isNaN(an)&&!isNaN(bn))?an-bn:String(a.x).localeCompare(String(b.x))
     })
-  }, [chartDataLeft, chartDataRight])
+    return config.xSortDir === 'desc' ? sorted.reverse() : sorted
+  }, [chartDataLeft, chartDataRight, config.xSortDir])
 
   const echartsOption = useMemo(() =>
     buildEChartsOption(
@@ -313,6 +313,8 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
       config.showLegend,
       config.groupBy,
       config.xField,
+      config.leftScaleY ?? false,
+      config.rightScaleY ?? false,
     ),
     [mergedChartData, config, fieldMeta, palette]
   )
@@ -562,6 +564,24 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
                 <label style={{ fontSize: 11 }}>Right Agg</label>
                 <select value={config.rightAggregation} onChange={e => patchConfig({ rightAggregation: e.target.value })} style={{ fontSize: 11 }}>
                   {AGG_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </div>
+
+              {/* Left scale */}
+              <div className="form-group" style={{ margin: 0 }}>
+                <label style={{ fontSize: 11 }}>Left Scale</label>
+                <select value={config.leftScaleY ? 'auto' : 'zero'} onChange={e => patchConfig({ leftScaleY: e.target.value === 'auto' })} style={{ fontSize: 11 }}>
+                  <option value="zero">from zero</option>
+                  <option value="auto">auto</option>
+                </select>
+              </div>
+
+              {/* Right scale */}
+              <div className="form-group" style={{ margin: 0 }}>
+                <label style={{ fontSize: 11 }}>Right Scale</label>
+                <select value={config.rightScaleY ? 'auto' : 'zero'} onChange={e => patchConfig({ rightScaleY: e.target.value === 'auto' })} style={{ fontSize: 11 }}>
+                  <option value="zero">from zero</option>
+                  <option value="auto">auto</option>
                 </select>
               </div>
 
