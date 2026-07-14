@@ -152,7 +152,7 @@ function ExportTab() {
         )}
       </div>
 
-      {/* Address book + settings */}
+      {/* Address book + settings + reports */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
           <input type="checkbox" checked={includeAddressLabels} onChange={e => setIncludeAddressLabels(e.target.checked)} />
@@ -162,6 +162,10 @@ function ExportTab() {
           <input type="checkbox" checked={includeSettings} onChange={e => setIncludeSettings(e.target.checked)} />
           Settings
         </label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--color-text-muted)' }}>
+          <input type="checkbox" checked readOnly disabled />
+          Reports (always included)
+        </div>
       </div>
 
       {error && <div className="error-banner">{error}</div>}
@@ -191,7 +195,7 @@ function ImportTab() {
   const [step, setStep] = useState('pick') // 'pick' | 'preview' | 'result'
   const [bundle, setBundle] = useState(null)
   const [preview, setPreview] = useState(null)
-  const [decisions, setDecisions] = useState({ queries: [], addressLabels: [], settings: [] })
+  const [decisions, setDecisions] = useState({ queries: [], addressLabels: [], settings: [], reports: [] })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [importResult, setImportResult] = useState(null)
@@ -229,7 +233,13 @@ function ImportTab() {
         include: true,
       }))
       const settingKeys = res.data.settings ? Object.keys(res.data.settings.incoming || {}) : []
-      setDecisions({ queries: queryDecs, addressLabels: labelDecs, settings: settingKeys })
+      const reportDecs = (res.data.reports || []).map(r => ({
+        name: r.name,
+        action: r.status === 'new' ? 'create' : 'overwrite',
+        include: true,
+        instanceCount: r.instanceCount ?? 0,
+      }))
+      setDecisions({ queries: queryDecs, addressLabels: labelDecs, settings: settingKeys, reports: reportDecs })
       setStep('preview')
     } finally {
       setLoading(false)
@@ -267,6 +277,13 @@ function ImportTab() {
     setDecisions(prev => ({ ...prev, settings: on ? keys : [] }))
   }
 
+  // Report decision helpers
+  const setReportDec = (name, patch) => setDecisions(prev => ({
+    ...prev,
+    reports: prev.reports.map(d => d.name === name ? { ...d, ...patch } : d),
+  }))
+  const toggleAllReports = (on) => setDecisions(prev => ({ ...prev, reports: prev.reports.map(d => ({ ...d, include: on })) }))
+
   const handleImport = async () => {
     setLoading(true)
     setError('')
@@ -286,7 +303,12 @@ function ImportTab() {
           chain: d.chain,
           action: d.action === 'create' ? 'create' : d.action,
         }))
-      const res = await commitImport({ bundle, decisions: { queries: queryPayload, addressLabels: labelPayload, settings: decisions.settings } })
+      const reportPayload = decisions.reports
+        .map(d => ({
+          name: d.name,
+          action: d.include ? (d.action === 'create' ? 'create_new' : d.action) : 'skip',
+        }))
+      const res = await commitImport({ bundle, decisions: { queries: queryPayload, addressLabels: labelPayload, settings: decisions.settings, reports: reportPayload } })
       if (!res.ok) { setError(res.data?.message || 'Import failed.'); return }
       setImportResult(res.data)
       setStep('result')
@@ -298,6 +320,7 @@ function ImportTab() {
   const includedCount = (decisions.queries.filter(d => d.include).length)
     + (decisions.addressLabels.filter(d => d.include).length)
     + decisions.settings.length
+    + decisions.reports.filter(d => d.include).length
 
   // ── Step: file pick ──
   if (step === 'pick') {
@@ -338,6 +361,7 @@ function ImportTab() {
     const lUpdated  = (r.addressLabels || []).filter(x => x.action === 'updated').length
     const lSkipped  = (r.addressLabels || []).filter(x => x.action === 'skipped').length
     const sImported = (r.settings || []).length
+    const rImported = (r.reports || []).length
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -362,6 +386,12 @@ function ImportTab() {
                 <td>{sImported} updated</td>
               </tr>
             )}
+            {rImported > 0 && (
+              <tr>
+                <td style={{ color: 'var(--color-text-muted)' }}>Reports</td>
+                <td>{rImported} imported</td>
+              </tr>
+            )}
           </tbody>
         </table>
         <div>
@@ -376,6 +406,7 @@ function ImportTab() {
   // ── Step: preview ──
   const previewQueries = preview?.queries || []
   const previewLabels = preview?.addressLabels || []
+  const previewReports = preview?.reports || []
   const previewSettings = preview?.settings || {}
 
   return (
@@ -483,6 +514,52 @@ function ImportTab() {
                         <option value="skip">Skip</option>
                       </select>
                     </>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Reports */}
+      {previewReports.length > 0 && (
+        <div>
+          <SectionHeader label="Reports" count={previewReports.length} onToggleAll={toggleAllReports} />
+          <div style={{ border: '1px solid var(--color-border)', borderRadius: 4, maxHeight: 240, overflow: 'auto' }}>
+            {decisions.reports.map((dec, i) => {
+              const pr = previewReports[i]
+              if (!pr) return null
+              return (
+                <div key={dec.name} style={{
+                  padding: '6px 12px',
+                  borderBottom: '1px solid var(--color-border)',
+                  display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+                  opacity: dec.include ? 1 : 0.45,
+                  fontSize: 12,
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={dec.include}
+                    onChange={e => setReportDec(dec.name, { include: e.target.checked })}
+                  />
+                  <span style={{ fontWeight: 500, fontSize: 13 }}>{pr.name}</span>
+                  {dec.instanceCount > 0 && (
+                    <span style={{ color: 'var(--color-text-muted)', fontSize: 11 }}>
+                      {dec.instanceCount} chart{dec.instanceCount !== 1 ? 's' : ''}
+                    </span>
+                  )}
+                  <StatusBadge status={pr.status} />
+                  {pr.status === 'conflict' && (
+                    <select
+                      value={dec.action}
+                      onChange={e => setReportDec(dec.name, { action: e.target.value })}
+                      style={{ fontSize: 11, padding: '1px 6px', marginLeft: 4 }}
+                    >
+                      <option value="overwrite">Overwrite</option>
+                      <option value="create">Create new</option>
+                      <option value="skip">Skip</option>
+                    </select>
                   )}
                 </div>
               )
