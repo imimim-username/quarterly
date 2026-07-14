@@ -463,6 +463,7 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
               addressLabels={addressLabels}
               onUpdate={patch => updateInstance(inst._tempId, patch)}
               onDelete={() => deleteInstance(inst._tempId)}
+              onSave={handleSave}
             />
           </div>
         </div>
