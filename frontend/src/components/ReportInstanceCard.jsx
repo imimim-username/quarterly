@@ -264,7 +264,7 @@ export function defaultInstanceConfig() {
  *    Runs a preview if needed, then returns the chart PNG and a suggested filename.
  */
 const ReportInstanceCard = forwardRef(function ReportInstanceCard(
-  { instance, allQueries, startDate, endDate, onUpdate, onDelete, onSave, reportTheme, addressLabels = [] },
+  { instance, allQueries, startDate, endDate, onUpdate, onDelete, reportTheme, addressLabels = [] },
   ref,
 ) {
   const [expanded, setExpanded] = useState(!instance.id) // new instances start expanded
@@ -276,7 +276,6 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
   const [previewRows, setPreviewRows] = useState(null) // raw rows after post-processing
   const [runStatus, setRunStatus] = useState('idle') // idle | running | done | error
   const [runError, setRunError] = useState('')
-  const [saveStatus, setSaveStatus] = useState('idle') // idle | saving | saved | error
   const chartInstanceRef = useRef(null)
 
   const query = useMemo(
@@ -354,20 +353,6 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
     ),
     [mergedChartData, effectiveRightFields, config, fieldMeta, reportTheme]
   )
-
-  // ── Save progress ──
-  const handleSaveProgress = useCallback(async () => {
-    if (!onSave) return
-    setSaveStatus('saving')
-    try {
-      await onSave()
-      setSaveStatus('saved')
-      setTimeout(() => setSaveStatus('idle'), 2500)
-    } catch {
-      setSaveStatus('error')
-      setTimeout(() => setSaveStatus('idle'), 3000)
-    }
-  }, [onSave])
 
   // Keep a ref to the latest config so patchConfig can compute next without
   // reading stale closure values, and without calling onUpdate inside a state setter.
@@ -693,7 +678,7 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
 
           <hr style={{ border:'none', borderTop:'1px solid var(--color-border)', margin:0 }} />
 
-          {/* Run preview button + save + status */}
+          {/* Run preview button + status */}
           <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
             <button
               onClick={runPreview}
@@ -702,25 +687,6 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
             >
               {runStatus === 'running' ? '⟳ Running…' : '▶ Run Preview'}
             </button>
-            {onSave && (
-              <button
-                onClick={handleSaveProgress}
-                disabled={saveStatus === 'saving'}
-                style={{
-                  fontSize: 12, padding: '5px 14px',
-                  background: saveStatus === 'saved' ? '#2a6e2a' : 'var(--color-surface2)',
-                  border: `1px solid ${saveStatus === 'saved' ? '#4caf50' : 'var(--color-border)'}`,
-                  color: saveStatus === 'saved' ? '#fff' : 'var(--color-text)',
-                  transition: 'background 0.3s, border-color 0.3s',
-                }}
-                title="Save report and all chart configurations"
-              >
-                {saveStatus === 'saving' ? '💾 Saving…'
-                 : saveStatus === 'saved' ? '✓ Saved'
-                 : saveStatus === 'error' ? '⚠ Save failed'
-                 : '💾 Save Progress'}
-              </button>
-            )}
             {runStatus === 'error' && (
               <span style={{ fontSize:11, color:'var(--color-error)' }}>{runError}</span>
             )}

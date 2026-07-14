@@ -109,6 +109,7 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
   const [allQueries, setAllQueries] = useState([])
   const [reportTheme, setReportTheme] = useState(() => normaliseTheme(report?.config?.theme))
   const [saving, setSaving] = useState(false)
+  const [saveFlash, setSaveFlash] = useState('') // '' | 'saved' | 'error'
   const [generating, setGenerating] = useState(false)
   const [genStatus, setGenStatus] = useState('') // progress text
   const [error, setError] = useState('')
@@ -187,8 +188,12 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
         }
       }
       onSave?.(saved)
+      setSaveFlash('saved')
+      setTimeout(() => setSaveFlash(''), 2500)
     } catch (e) {
       setError(e.message)
+      setSaveFlash('error')
+      setTimeout(() => setSaveFlash(''), 3000)
     } finally {
       setSaving(false)
     }
@@ -463,11 +468,52 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
               addressLabels={addressLabels}
               onUpdate={patch => updateInstance(inst._tempId, patch)}
               onDelete={() => deleteInstance(inst._tempId)}
-              onSave={handleSave}
             />
           </div>
         </div>
       ))}
+
+      {/* Floating save button — always visible while editing */}
+      <button
+        onClick={handleSave}
+        disabled={saving}
+        title={isNew ? 'Create report and save all chart configurations' : 'Save report and all chart configurations'}
+        style={{
+          position: 'fixed',
+          bottom: 28,
+          right: 28,
+          zIndex: 1200,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 7,
+          padding: '10px 18px',
+          fontSize: 13,
+          fontWeight: 600,
+          borderRadius: 28,
+          border: 'none',
+          cursor: saving ? 'default' : 'pointer',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.45)',
+          background: saveFlash === 'saved'  ? '#2a6e2a'
+                    : saveFlash === 'error'  ? '#6e2a2a'
+                    : saving                 ? 'var(--color-surface2)'
+                    : 'var(--color-accent)',
+          color: saving ? 'var(--color-text-muted)' : '#fff',
+          transition: 'background 0.25s',
+          userSelect: 'none',
+        }}
+      >
+        <span style={{ fontSize: 16, lineHeight: 1 }}>
+          {saving                        ? '⟳'
+           : saveFlash === 'saved'       ? '✓'
+           : saveFlash === 'error'       ? '⚠'
+           : '💾'}
+        </span>
+        {saving                    ? 'Saving…'
+         : saveFlash === 'saved'   ? 'Saved!'
+         : saveFlash === 'error'   ? 'Save failed'
+         : isNew                   ? 'Create & Save'
+         : 'Save'}
+      </button>
     </div>
   )
 }
