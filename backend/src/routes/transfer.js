@@ -79,6 +79,21 @@ module.exports = function transferRoutes(db) {
         bundle.settings = Object.fromEntries(rows.map(r => [r.key, r.value]));
       }
 
+      // Reports + instances (always included)
+      const reportRows = db.prepare('SELECT * FROM reports ORDER BY name').all();
+      bundle.reports = reportRows.map(r => {
+        let instances = [];
+        try {
+          instances = db.prepare('SELECT * FROM report_instances WHERE report_id=? ORDER BY position, id').all(r.id)
+            .map(inst => {
+              let config;
+              try { config = JSON.parse(inst.config || '{}'); } catch { config = {}; }
+              return { query_id: inst.query_id, position: inst.position, label: inst.label, config };
+            });
+        } catch (_) {}
+        return { name: r.name, description: r.description || '', instances };
+      });
+
       res.json(bundle);
     } catch (e) {
       console.error('Export error:', e);
@@ -136,6 +151,18 @@ module.exports = function transferRoutes(db) {
         const currentRows = db.prepare(`SELECT key, value FROM settings WHERE key IN (${ALLOWED_SETTINGS.map(() => '?').join(',')})`).all(...ALLOWED_SETTINGS);
         const current = Object.fromEntries(currentRows.map(r => [r.key, r.value]));
         result.settings = { incoming: bundle.settings, current };
+      }
+
+      // Reports
+      if (Array.isArray(bundle.reports)) {
+        result.reports = bundle.reports.map(r => {
+          const existing = db.prepare('SELECT id FROM reports WHERE name = ?').get(r.name);
+          return {
+            name: r.name,
+            instanceCount: Array.isArray(r.instances) ? r.instances.length : 0,
+            status: existing ? 'conflict' : 'new',
+          };
+        });
       }
 
       res.json(result);
@@ -298,6 +325,49 @@ module.exports = function transferRoutes(db) {
           }
         }
 
+        // ── Reports ──
+        const reportDecisions = decisions.reports || [];
+        const bundleReports = bundle.reports || [];
+        for (const decision of reportDecisions) {
+          if (decision.action === 'skip') continue;
+          const bundleReport = bundleReports.find(r => r.name === decision.name);
+          if (!bundleReport) continue;
+          const now = new Date().toISOString();
+
+          let reportId;
+          if (decision.action === 'overwrite') {
+            const existing = db.prepare('SELECT id FROM reports WHERE name = ?').get(bundleReport.name);
+            if (existing) {
+              db.prepare('UPDATE reports SET description=?, updated_at=? WHERE id=?')
+                .run(bundleReport.description || '', now, existing.id);
+              db.prepare('DELETE FROM report_instances WHERE report_id=?').run(existing.id);
+              reportId = existing.id;
+            } else {
+              decision.action = 'create_new';
+            }
+          }
+
+          if (decision.action === 'create_new') {
+            let newName = bundleReport.name;
+            if (db.prepare('SELECT id FROM reports WHERE name = ?').get(newName)) {
+              newName = bundleReport.name + ' (imported)';
+            }
+            const info = db.prepare('INSERT INTO reports (name, description, created_at, updated_at) VALUES (?,?,?,?)')
+              .run(newName, bundleReport.description || '', now, now);
+            reportId = info.lastInsertRowid;
+          }
+
+          // Insert instances (query_id must exist in this DB)
+          const insertInst = db.prepare(
+            'INSERT INTO report_instances (report_id, query_id, position, label, config, created_at) VALUES (?,?,?,?,?,?)'
+          );
+          for (const inst of (bundleReport.instances || [])) {
+            const q = db.prepare('SELECT id FROM queries WHERE id = ?').get(inst.query_id);
+            if (!q) continue; // skip if query doesn't exist in this DB
+            insertInst.run(reportId, inst.query_id, inst.position ?? 0, inst.label ?? '', JSON.stringify(inst.config ?? {}), now);
+          }
+        }
+
         // ── Settings ──
         const settingKeys = (decisions.settings || []).filter(k => ALLOWED_SETTINGS.includes(k));
         const incomingSettings = bundle.settings || {};
@@ -315,6 +385,7 @@ module.exports = function transferRoutes(db) {
         queries: queryResults,
         addressLabels: labelResults,
         settings: settingResults,
+        reports: (decisions.reports || []).filter(d => d.action !== 'skip').map(d => d.name),
       });
     } catch (e) {
       console.error('Import error:', e);

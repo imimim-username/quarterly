@@ -50,6 +50,12 @@ export const deleteReport = (id) => request('DELETE', `/reports/${id}`);
 export const runReport = (id, body) => request('POST', `/reports/${id}/run`, body);
 export const getReportRun = (reportRunId) => request('GET', `/reports/runs/${reportRunId}`);
 
+// Report instances
+export const addReportInstance = (reportId, body) => request('POST', `/reports/${reportId}/instances`, body);
+export const updateReportInstance = (reportId, instanceId, body) => request('PUT', `/reports/${reportId}/instances/${instanceId}`, body);
+export const deleteReportInstance = (reportId, instanceId) => request('DELETE', `/reports/${reportId}/instances/${instanceId}`);
+export const bulkSaveReportInstances = (reportId, instances) => request('PUT', `/reports/${reportId}/instances`, { instances });
+
 // Address labels
 export const listAddressLabels   = ()        => request('GET',    '/address-labels');
 export const createAddressLabel  = (body)    => request('POST',   '/address-labels', body);
