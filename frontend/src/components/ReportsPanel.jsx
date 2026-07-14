@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import ReportBuilder from './ReportBuilder.jsx'
 import { listReports, getReport } from '../api/client.js'
 
-export default function ReportsPanel({ startDate, endDate }) {
+export default function ReportsPanel({ startDate, endDate, addressLabels = [] }) {
   const [reports, setReports] = useState([])
   const [selectedReport, setSelectedReport] = useState(null) // null = none, {} = new, {...} = existing
   const [refresh, setRefresh] = useState(0)
@@ -94,6 +94,7 @@ export default function ReportsPanel({ startDate, endDate }) {
               report={selectedReport?.id ? selectedReport : null}
               startDate={startDate}
               endDate={endDate}
+              addressLabels={addressLabels}
               onSave={handleSave}
               onDelete={handleDelete}
             />

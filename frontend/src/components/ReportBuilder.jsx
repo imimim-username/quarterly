@@ -75,7 +75,7 @@ function nextTempId() { return `tmp_${++tempIdCounter}` }
  *  onSave(report)
  *  onDelete()
  */
-export default function ReportBuilder({ report, startDate, endDate, onSave, onDelete }) {
+export default function ReportBuilder({ report, startDate, endDate, addressLabels = [], onSave, onDelete }) {
   const [name, setName] = useState(report?.name ?? '')
   const [description, setDescription] = useState(report?.description ?? '')
   const [instances, setInstances] = useState(() => normaliseInstances(report?.instances ?? []))
@@ -381,6 +381,7 @@ export default function ReportBuilder({ report, startDate, endDate, onSave, onDe
               startDate={startDate}
               endDate={endDate}
               palette={palette}
+              addressLabels={addressLabels}
               onUpdate={patch => updateInstance(inst._tempId, patch)}
               onDelete={() => deleteInstance(inst._tempId)}
             />

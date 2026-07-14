@@ -5,6 +5,7 @@ import * as echarts from 'echarts'
 import { createRun } from '../api/client.js'
 import { applyComputedColumns } from '../utils/computedColumns.js'
 import { applyTimestampExtraction } from '../utils/timestampExtraction.js'
+import ResultFilters from './ResultFilters.jsx'
 
 // ─── Chart helpers (mirrors ResultsChart logic) ───────────────────────────────
 
@@ -94,13 +95,16 @@ function fmtXLabel(val, groupBy, xField) {
 }
 
 function buildEChartsOption(chartData, leftFields, rightFields, leftType, rightType, fieldMeta, seriesColors, palette, showLegend, groupBy, xField, leftScaleY = false, rightScaleY = false) {
-  const allFields = [...leftFields, ...rightFields]
   const xLabels = chartData.map(p => fmtXLabel(p.x, groupBy, xField))
 
   const makeSeries = (fields, yAxisIdx, type, colorOffset) =>
     fields.map((f, i) => {
-      const color = seriesColors[f] ?? palette[(colorOffset+i)%palette.length]
-      const label = fieldMeta[f]?.label || f
+      // rightFields may contain aliased names like "amount__right" when the same
+      // field is used on both axes; resolve back to the base name for meta/color lookup
+      const baseField = f.replace(/__right$/, '')
+      const color = seriesColors[baseField] ?? palette[(colorOffset+i)%palette.length]
+      const baseLabel = fieldMeta[baseField]?.label || baseField
+      const label = f.endsWith('__right') ? `${baseLabel} (R)` : baseLabel
       return {
         name: label,
         type: type === 'area' ? 'line' : type,
@@ -174,28 +178,6 @@ function filterRows(rows, activeFilters) {
   )
 }
 
-// ─── Detect filterable columns (mirrors ResultFilters logic) ─────────────────
-
-function isIntegerOnly(rows, field) {
-  for (const row of rows) {
-    const val = row[field]
-    if (val === null || val === undefined || val === '') continue
-    if (!/^-?\d+$/.test(String(val))) return false
-  }
-  return true
-}
-
-function detectFilterable(rows) {
-  if (!rows || !rows.length) return []
-  return Object.keys(rows[0])
-    .filter(col => !isIntegerOnly(rows, col))
-    .map(col => {
-      const vals = [...new Set(rows.map(r=>r[col]).filter(v=>v!=null&&v!=='').map(String))].sort()
-      return { col, vals }
-    })
-    .filter(({ vals }) => vals.length >= 2 && vals.length <= 50)
-}
-
 // ─── Default instance config ─────────────────────────────────────────────────
 
 export function defaultInstanceConfig() {
@@ -239,7 +221,7 @@ export function defaultInstanceConfig() {
  *    Runs a preview if needed, then returns the chart PNG and a suggested filename.
  */
 const ReportInstanceCard = forwardRef(function ReportInstanceCard(
-  { instance, allQueries, startDate, endDate, onUpdate, onDelete, palette },
+  { instance, allQueries, startDate, endDate, onUpdate, onDelete, palette, addressLabels = [] },
   ref,
 ) {
   const [expanded, setExpanded] = useState(!instance.id) // new instances start expanded
@@ -270,8 +252,6 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
     return [...new Set([...fromMeta, ...fromRows])]
   }, [fieldMeta, previewRows])
 
-  const filterableFields = useMemo(() => detectFilterable(previewRows), [previewRows])
-
   // ── Filtered rows for chart ──
   const filteredRows = useMemo(() => filterRows(previewRows, config.activeFilters), [previewRows, config.activeFilters])
 
@@ -285,26 +265,38 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
     [filteredRows, config.xField, config.rightFields, config.colDivisors, config.groupBy, config.rightYMode, config.rightAggregation, config.xSortDir]
   )
 
-  // Merge left+right onto shared x axis
+  // Fields that appear on both axes need an alias on the right side so they
+  // don't overwrite the left value when merged onto the same x-keyed map.
+  const effectiveRightFields = useMemo(() => {
+    const leftSet = new Set(config.leftFields ?? [])
+    return (config.rightFields ?? []).map(f => leftSet.has(f) ? `${f}__right` : f)
+  }, [config.leftFields, config.rightFields])
+
+  // Merge left+right onto shared x axis, aliasing overlapping right fields
   const mergedChartData = useMemo(() => {
+    const leftSet = new Set(config.leftFields ?? [])
     const map = new Map()
     for (const p of chartDataLeft) map.set(p.x, { ...p })
     for (const p of chartDataRight) {
-      if (map.has(p.x)) Object.assign(map.get(p.x), p)
-      else map.set(p.x, { ...p })
+      const entry = map.has(p.x) ? map.get(p.x) : { x: p.x }
+      for (const [k, v] of Object.entries(p)) {
+        if (k === 'x') continue
+        entry[leftSet.has(k) ? `${k}__right` : k] = v
+      }
+      if (!map.has(p.x)) map.set(p.x, entry)
     }
     const sorted = [...map.values()].sort((a,b)=>{
       const an=Number(a.x),bn=Number(b.x)
       return (!isNaN(an)&&!isNaN(bn))?an-bn:String(a.x).localeCompare(String(b.x))
     })
     return config.xSortDir === 'desc' ? sorted.reverse() : sorted
-  }, [chartDataLeft, chartDataRight, config.xSortDir])
+  }, [chartDataLeft, chartDataRight, config.leftFields, config.xSortDir])
 
   const echartsOption = useMemo(() =>
     buildEChartsOption(
       mergedChartData,
       config.leftFields ?? [],
-      config.rightFields ?? [],
+      effectiveRightFields,
       config.leftType,
       config.rightType,
       fieldMeta,
@@ -316,7 +308,7 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
       config.leftScaleY ?? false,
       config.rightScaleY ?? false,
     ),
-    [mergedChartData, config, fieldMeta, palette]
+    [mergedChartData, effectiveRightFields, config, fieldMeta, palette]
   )
 
   // ── Persist changes ──
@@ -603,7 +595,7 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
                 label="Left Y Fields"
                 selected={config.leftFields ?? []}
                 allColumns={allColumns}
-                exclude={[config.xField, ...(config.rightFields ?? [])]}
+                exclude={[config.xField]}
                 onChange={v => patchConfig({ leftFields: v })}
                 colDivisors={config.colDivisors ?? {}}
                 onDivisorChange={d => patchConfig({ colDivisors: d })}
@@ -612,7 +604,7 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
                 label="Right Y Fields"
                 selected={config.rightFields ?? []}
                 allColumns={allColumns}
-                exclude={[config.xField, ...(config.leftFields ?? [])]}
+                exclude={[config.xField]}
                 onChange={v => patchConfig({ rightFields: v })}
                 colDivisors={config.colDivisors ?? {}}
                 onDivisorChange={d => patchConfig({ colDivisors: d })}
@@ -620,44 +612,18 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
             </div>
           )}
 
-          {/* Filters — only available after preview run */}
-          {filterableFields.length > 0 && (
+          {/* Filters — only available after preview run; address book labels applied */}
+          {previewRows && previewRows.length > 0 && (
             <div>
               <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)', textTransform:'uppercase', letterSpacing:'0.05em', marginBottom: 6 }}>
                 Filters
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {filterableFields.map(({ col, vals }) => {
-                  const active = config.activeFilters?.[col] ?? []
-                  const allActive = active.length === 0
-                  const toggle = (val) => {
-                    const next = allActive
-                      ? [val]
-                      : active.includes(val) ? active.filter(v=>v!==val) : [...active, val]
-                    patchConfig({ activeFilters: { ...(config.activeFilters ?? {}), [col]: next.length===vals.length?[]:next } })
-                  }
-                  return (
-                    <div key={col} style={{ display:'flex', alignItems:'center', gap:5, flexWrap:'wrap' }}>
-                      <span style={{ fontSize:11, color:'var(--color-text-muted)', minWidth:56, textAlign:'right', flexShrink:0 }}>{col}</span>
-                      <button
-                        onClick={() => patchConfig({ activeFilters: { ...(config.activeFilters ?? {}), [col]: [] } })}
-                        style={{ fontSize:10, padding:'1px 6px', background:allActive?'var(--color-accent)':'transparent', color:allActive?'#fff':undefined }}
-                      >all</button>
-                      {vals.map(val => (
-                        <button
-                          key={val}
-                          onClick={() => toggle(val)}
-                          style={{
-                            fontSize:10, padding:'1px 6px',
-                            background: !allActive && active.includes(val) ? 'var(--color-accent)' : 'transparent',
-                            color: !allActive && active.includes(val) ? '#fff' : undefined,
-                          }}
-                        >{val.length > 16 ? val.slice(0,8)+'…'+val.slice(-5) : val}</button>
-                      ))}
-                    </div>
-                  )
-                })}
-              </div>
+              <ResultFilters
+                rows={previewRows}
+                activeFilters={config.activeFilters ?? {}}
+                onChange={activeFilters => patchConfig({ activeFilters })}
+                addressLabels={addressLabels}
+              />
             </div>
           )}
 

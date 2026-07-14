@@ -600,7 +600,7 @@ export default function App() {
 
           {/* Reports tab */}
           {tab === 'reports' && (
-            <ReportsPanel startDate={startDate} endDate={endDate} />
+            <ReportsPanel startDate={startDate} endDate={endDate} addressLabels={addressLabels} />
           )}
         </div>
       </div>
