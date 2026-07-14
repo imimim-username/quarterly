@@ -90,6 +90,9 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
   // Refs to each ReportInstanceCard (keyed by instance tempId)
   const cardRefs = useRef({})
 
+  // Set to true by the Cancel button to break out of the generate loop
+  const cancelRef = useRef(false)
+
   useEffect(() => {
     listQueries().then(({ data }) => setAllQueries(Array.isArray(data) ? data : []))
     listColorSchemes().then(({ data }) => {
@@ -214,6 +217,7 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
 
   const handleGenerate = async () => {
     if (instances.length === 0) return
+    cancelRef.current = false
     setGenerating(true)
     setGenStatus('Preparing…')
     setError('')
@@ -223,43 +227,69 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
       try { await handleSave() } catch {}
     }
 
-    const pngs = []
+    // Pick destination folder up-front so we can write each PNG immediately.
+    // Fallback: accumulate in memory and ZIP at the end.
+    const dirHandle = await pickDirectory()
+
+    const pngs = []   // used only in ZIP fallback mode
+    let saved = 0
+    let cancelled = false
+
     for (let i = 0; i < instances.length; i++) {
+      if (cancelRef.current) { cancelled = true; break }
+
       const inst = instances[i]
       const cardRef = cardRefs.current[inst._tempId]
       if (!cardRef) continue
-      setGenStatus(`Running ${i + 1} / ${instances.length}: ${inst.label || inst.query?.name || '…'}`)
+
+      const label = inst.label || inst.query?.name || '…'
+      setGenStatus(`${i + 1} / ${instances.length}: ${label}`)
+
       try {
         const { dataUrl, filename } = await cardRef.generate()
-        if (dataUrl) pngs.push({ dataUrl, filename })
+        if (!dataUrl) continue
+
+        if (dirHandle) {
+          // Write immediately — progress is preserved even if cancelled later
+          await writePngToDir(dirHandle, filename, dataUrl)
+          saved++
+          setGenStatus(`${i + 1} / ${instances.length}: ${label} ✓  (${saved} saved)`)
+        } else {
+          pngs.push({ dataUrl, filename })
+          setGenStatus(`${i + 1} / ${instances.length}: ${label} ✓`)
+        }
       } catch (e) {
         console.error('Generate failed for instance', inst, e)
       }
     }
 
-    if (pngs.length === 0) {
-      setGenStatus('No charts could be generated.')
-      setGenerating(false)
-      return
-    }
-
-    setGenStatus(`Saving ${pngs.length} PNG${pngs.length > 1 ? 's' : ''}…`)
-
-    // Try folder picker first
-    const dirHandle = await pickDirectory()
     if (dirHandle) {
-      let saved = 0
-      for (const { dataUrl, filename } of pngs) {
-        try { await writePngToDir(dirHandle, filename, dataUrl); saved++ } catch {}
-      }
-      setGenStatus(`✓ Saved ${saved} PNG${saved > 1 ? 's' : ''} to folder.`)
+      setGenStatus(
+        cancelled
+          ? `Cancelled — ${saved} PNG${saved !== 1 ? 's' : ''} already saved to folder.`
+          : `✓ Saved ${saved} PNG${saved !== 1 ? 's' : ''} to folder.`
+      )
     } else {
-      // Fallback to ZIP download
+      if (pngs.length === 0) {
+        setGenStatus(cancelled ? 'Cancelled — nothing was saved.' : 'No charts could be generated.')
+        setGenerating(false)
+        return
+      }
+      setGenStatus(`Packaging ${pngs.length} PNG${pngs.length > 1 ? 's' : ''} into ZIP…`)
       await downloadAsZip(pngs)
-      setGenStatus(`✓ Downloaded ${pngs.length} PNG${pngs.length > 1 ? 's' : ''} as ZIP.`)
+      setGenStatus(
+        cancelled
+          ? `Cancelled — downloaded ${pngs.length} PNG${pngs.length !== 1 ? 's' : ''} completed so far.`
+          : `✓ Downloaded ${pngs.length} PNG${pngs.length !== 1 ? 's' : ''} as ZIP.`
+      )
     }
 
     setGenerating(false)
+  }
+
+  const handleCancelGenerate = () => {
+    cancelRef.current = true
+    setGenStatus(prev => prev + '  (cancelling…)')
   }
 
   const isNew = !report?.id
@@ -291,13 +321,20 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
         >
           + Add Chart Instance
         </button>
-        {instances.length > 0 && (
+        {instances.length > 0 && !generating && (
           <button
             onClick={handleGenerate}
-            disabled={generating}
             style={{ background:'#2a6e2a', border:'1px solid #4caf50', color:'#fff', marginLeft:'auto' }}
           >
-            {generating ? genStatus || 'Generating…' : '⬇ Generate PNGs'}
+            ⬇ Generate PNGs
+          </button>
+        )}
+        {generating && (
+          <button
+            onClick={handleCancelGenerate}
+            style={{ background:'#6e2a2a', border:'1px solid #f44336', color:'#fff', marginLeft:'auto' }}
+          >
+            ✕ Cancel
           </button>
         )}
         {!isNew && (
@@ -310,9 +347,11 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
         )}
       </div>
 
-      {/* Gen status message (when not in progress) */}
-      {!generating && genStatus && (
-        <div style={{ fontSize:12, color:'var(--color-success)' }}>{genStatus}</div>
+      {/* Gen status message */}
+      {genStatus && (
+        <div style={{ fontSize:12, color: generating ? 'var(--color-text-muted)' : 'var(--color-success)' }}>
+          {genStatus}
+        </div>
       )}
 
       {/* Query picker dropdown */}
