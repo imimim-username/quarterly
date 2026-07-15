@@ -42,13 +42,21 @@ function buildEChartsOption(chartData, leftFields, rightFields, leftType, rightT
 
   const xLabels = chartData.map(p => fmtXLabel(p.x, groupBy, xField))
 
-  // Build a display label for a field, with optional "(R)" and "(cumulative)" suffixes
+  // Labels the left series would use (without any R suffix) — used for collision detection
+  const leftLabelSet = new Set(
+    (leftFields).map(f => {
+      const base = fieldMeta[f]?.label || f
+      return leftYMode === 'cumulative' ? `${base} (cumulative)` : base
+    })
+  )
+
+  // Build a display label; "(R)" is only appended when it would otherwise collide with a left-axis label
   const makeSeriesLabel = (f, yMode) => {
     const baseField = f.replace(/__right$/, '')
     const baseLabel = fieldMeta[baseField]?.label || baseField
-    const rSuffix   = f.endsWith('__right') ? ' (R)' : ''
     const cumSuffix = yMode === 'cumulative' ? ' (cumulative)' : ''
-    return `${baseLabel}${rSuffix}${cumSuffix}`
+    const label     = `${baseLabel}${cumSuffix}`
+    return (f.endsWith('__right') && leftLabelSet.has(label)) ? `${label} (R)` : label
   }
 
   const makeSeries = (fields, yAxisIdx, type, colorOffset, yMode) =>
