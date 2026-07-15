@@ -117,8 +117,27 @@ async function writePngToDir(dirHandle, filename, dataUrl) {
 }
 
 /**
- * Fallback for browsers without showDirectoryPicker (Firefox, Safari).
- * Bundles all PNGs into a single ZIP and triggers one download dialog.
+ * Fallback for browsers where showDirectoryPicker is unavailable.
+ * Triggers individual <a download> clicks sequentially.
+ * The browser may ask once "allow this site to download multiple files?" —
+ * after that one prompt all files download automatically to the Downloads folder.
+ */
+async function downloadFilesIndividually(pngs) {
+  for (let i = 0; i < pngs.length; i++) {
+    const { dataUrl, filename } = pngs[i]
+    const a = document.createElement('a')
+    a.href = dataUrl
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    // Brief pause between triggers so the browser doesn't coalesce/drop them
+    if (i < pngs.length - 1) await new Promise(r => setTimeout(r, 200))
+  }
+}
+
+/**
+ * Single-file ZIP fallback — kept for external use / testing.
  */
 function downloadAsZip(pngs) {
   const files = pngs.map(({ dataUrl, filename }) => {
@@ -331,7 +350,7 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
   // Runs in the background after the directory is picked.
   // Called with void so handleGenerate returns immediately and the UI stays live.
   const runGenerateLoop = useCallback(async (dirHandle, snap) => {
-    const pngs = []   // ZIP fallback only
+    const pngs = []   // individual-download fallback
     let saved = 0
     let cancelled = false
 
@@ -374,12 +393,12 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
         setGenerating(false)
         return
       }
-      setGenStatus(`Downloading ${pngs.length} PNG${pngs.length > 1 ? 's' : ''}…`)
-      await downloadAsZip(pngs)
+      setGenStatus(`Downloading ${pngs.length} PNG${pngs.length > 1 ? 's' : ''} to Downloads folder…`)
+      await downloadFilesIndividually(pngs)
       setGenStatus(
         cancelled
-          ? `Cancelled — downloaded ${pngs.length} PNG${pngs.length !== 1 ? 's' : ''} completed so far.`
-          : `✓ Downloaded ${pngs.length} PNG${pngs.length !== 1 ? 's' : ''}.`
+          ? `Cancelled — ${pngs.length} PNG${pngs.length !== 1 ? 's' : ''} sent to Downloads folder.`
+          : `✓ ${pngs.length} PNG${pngs.length !== 1 ? 's' : ''} saved to your Downloads folder.`
       )
     }
 
@@ -396,13 +415,10 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
     // User dismissed the picker — do nothing.
     if (cancelled) return
 
-    // Picker threw a non-cancellation error (e.g. Brave Shields blocked it).
-    // Show the message and bail out — do NOT fall through to ZIP, because the
-    // user explicitly wants individual files in a folder and should fix the
-    // underlying issue rather than receiving a ZIP they didn't ask for.
+    // Picker unavailable (browser setting) — fall through to individual downloads.
+    // Show an informational note but don't bail; the user still gets their files.
     if (pickerError) {
-      setError(pickerError)
-      return
+      setError('Folder picker unavailable — files will download individually to your Downloads folder. If Brave asks to allow multiple downloads, click Allow.')
     }
 
     // Snapshot the instance list so reorders/deletions mid-run don't affect the loop.
@@ -410,7 +426,7 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
 
     cancelRef.current = false
     setGenerating(true)
-    setGenStatus(dirHandle ? 'Saving to folder…' : 'Building ZIP…')
+    setGenStatus(dirHandle ? 'Saving to folder…' : 'Generating PNGs…')
 
     // Fire and forget — the UI stays fully interactive while files save in the background.
     void runGenerateLoop(dirHandle, snap)
