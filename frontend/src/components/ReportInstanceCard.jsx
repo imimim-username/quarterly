@@ -84,7 +84,7 @@ function buildEChartsOption(chartData, leftFields, rightFields, leftType, rightT
     return yMode === 'cumulative' ? `${name} (cumulative)` : name
   }
 
-  const axisLabelStyle = { formatter: fmtAxisVal, fontSize: 10, color: textColor }
+  const axisLabelStyle = { formatter: fmtAxisVal, fontSize: 10, color: textColor, fontFamily: 'Montserrat, sans-serif' }
   const axisLineStyle  = { lineStyle: { color: axisColor } }
 
   const yAxes = [
@@ -116,16 +116,16 @@ function buildEChartsOption(chartData, leftFields, rightFields, leftType, rightT
     },
     option: {
       backgroundColor: bgRgba,
-      textStyle: { color: textColor },
+      textStyle: { color: textColor, fontFamily: 'Montserrat, sans-serif' },
       legend: showLegend
-        ? { show: true, top: 4, textStyle: { fontSize: 10, color: textColor } }
+        ? { show: true, top: 4, textStyle: { fontSize: 10, color: textColor, fontFamily: 'Montserrat, sans-serif' } }
         : { show: false },
       grid: { left: 52, right: rightFields.length > 0 ? 52 : 12, top: showLegend ? 36 : 12, bottom: 40, containLabel: false },
-      tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+      tooltip: { trigger: 'axis', axisPointer: { type: 'cross' }, extraCssText: 'font-family: Montserrat, sans-serif;' },
       xAxis: {
         type: 'category',
         data: xLabels,
-        axisLabel: { rotate: xLabels.length > 20 ? 30 : 0, fontSize: 10, color: textColor },
+        axisLabel: { rotate: xLabels.length > 20 ? 30 : 0, fontSize: 10, color: textColor, fontFamily: 'Montserrat, sans-serif' },
         axisLine: axisLineStyle,
         axisTick: axisLineStyle,
         splitLine: { show: false },
