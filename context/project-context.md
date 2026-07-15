@@ -92,9 +92,11 @@ quarterly/                          npm workspace root
 │       ├── colorSchemes.test.js
 │       ├── endpoints.test.js
 │       ├── reports.test.js
+│       ├── addressLabels.test.js
 │       └── date_filtering.test.js
 ├── frontend/
 │   ├── package.json                name: quarterly-frontend, version: 1.0.0
+│   ├── index.html                  SPA entry; loads 10 Google Fonts via one combined CSS URL
 │   ├── vite.config.js              dev proxy /api → http://127.0.0.1:8790
 │   ├── vitest.config.js            jsdom environment, @testing-library/jest-dom setup
 │   └── src/
@@ -107,12 +109,14 @@ quarterly/                          npm workspace root
 │       │   ├── computedColumns.js  applyComputedColumns / computedFieldMeta / custom arithmetic parser
 │       │   ├── timestampExtraction.js  applyTimestampExtraction / timestampExtractionMeta
 │       │   ├── mergeDatasets.js    mergeDatasets / formatXLabel — union-join for MultiQueryChart
+│       │   ├── chartDataUtils.js   buildChartData / makeAxisName / bucketTimestamp — chart helpers for ReportInstanceCard
 │       │   └── __tests__/
 │       │       ├── computedColumns.test.js   (115 tests)
 │       │       ├── timestampExtraction.test.js  (25 tests)
-│       │       └── mergeDatasets.test.js     (38 tests)
+│       │       ├── mergeDatasets.test.js     (38 tests)
+│       │       └── chartDataUtils.test.js    (56 tests)
 │       └── components/             27 components (see §10)
-│           ├── __tests__/          14 Vitest test files
+│           ├── __tests__/          15 Vitest test files
 │           └── ...
 └── queries/
     └── builtin/
@@ -296,7 +300,7 @@ CREATE TABLE reports (
   id          INTEGER PRIMARY KEY,
   name        TEXT    NOT NULL,
   description TEXT    NOT NULL DEFAULT '',
-  config      TEXT    DEFAULT NULL,    -- JSON: { theme: { palette, bg, bgAlpha, textColor, gridColor, axisColor } } (added migration 010)
+  config      TEXT    DEFAULT NULL,    -- JSON: { theme: { palette, bg, bgAlpha, textColor, gridColor, axisColor, fontFamily } } (added migration 010)
   created_at  TEXT    NOT NULL,
   updated_at  TEXT    DEFAULT NULL     -- added migration 009
 );
@@ -1437,12 +1441,13 @@ Matches rows by `keyField`. For each numeric column, shows `valueA`, `valueB`, `
 **`defaultReportTheme()` (module-level helper):**
 ```js
 {
-  palette:   ['#e94560','#2196f3','#4caf50','#ff9800','#9c27b0','#00bcd4'],
-  bg:        '#1a1f2e',
-  bgAlpha:   100,          // 0–100 %
-  textColor: '#c0c0c0',
-  gridColor: '#333333',
-  axisColor: '#555555',
+  palette:    ['#e94560','#2196f3','#4caf50','#ff9800','#9c27b0','#00bcd4'],
+  bg:         '#1a1f2e',
+  bgAlpha:    100,          // 0–100 %
+  textColor:  '#c0c0c0',
+  gridColor:  '#333333',
+  axisColor:  '#555555',
+  fontFamily: 'Montserrat', // applied to all ECharts text (axes, legend, tooltip)
 }
 ```
 
@@ -1459,13 +1464,16 @@ Matches rows by `keyField`. For each numeric column, shows `valueA`, `valueB`, `
 />
 ```
 
-Collapsible panel (▼/▶ toggle). Controls:
-- **Series Colors** — ordered swatches; each opens a `<input type="color">` inline picker. Add (+) and remove (−) buttons.
-- **Background** — `<input type="color">` + hex text input. **Opacity** slider (0–100, maps to `bgAlpha`).
-- **Text Color**, **Grid Lines**, **Axis Lines** — each a `<input type="color">` + hex text input.
+Collapsible panel (▼/▶ toggle). Header row shows palette preview swatches + Export/Import buttons (clicking header toggles open/close; clicking buttons does not toggle).
+
+Controls (when open):
+- **Series Colors** — `PaletteSwatch` sub-components, one per palette color. Each swatch has a `<input type="color">` picker + 52 px hex text input (for paste support) + × remove button. Add (+) button appends `#888888`. Minimum 1 color enforced.
+- **Font** — `<select>` offering 10 Google Fonts: Montserrat (default), DM Sans, IBM Plex Sans, Inter, Lato, Nunito, Open Sans, Raleway, Roboto, Source Sans 3. Font name renders in the selected typeface via inline `style={{ fontFamily }}`. Applied to all ECharts text (global `textStyle`, legend, axes, tooltip).
+- **Background** — `ColorRow` (`<input type="color">` + 72 px hex text input). **Opacity** slider (0–100, maps to `bgAlpha`; live swatch preview).
+- **Text Color**, **Grid Lines**, **Axis Lines** — each a `ColorRow` (`<input type="color">` + hex text input).
 - **Reset to Default** button — calls `onChange(defaultReportTheme())`.
 - **Export Theme** button — downloads `{ reportTheme: theme }` as `report-theme.json`.
-- **Import Theme** button — `<input type="file" accept=".json">` → parses JSON → calls `onChange(normaliseTheme(parsed.reportTheme ?? parsed))`.
+- **Import Theme** button — `<input type="file" accept=".json">` → parses JSON → calls `onChange({ ...defaultTheme, ...(parsed.reportTheme ?? parsed) })`.
 
 All changes call `onChange` immediately (live preview in charts).
 
@@ -1514,14 +1522,25 @@ function hexToRgba(hex, alpha) {
 
 **`buildEChartsOption`** — applies full theme:
 - `backgroundColor: hexToRgba(reportTheme.bg, reportTheme.bgAlpha)`
-- `textStyle.color`, `legend.textStyle.color` → `reportTheme.textColor`
-- Both axes: `axisLine.lineStyle.color`, `axisTick.lineStyle.color`, `axisLabel.color` → `reportTheme.axisColor` / `reportTheme.textColor`
+- `textStyle: { color: reportTheme.textColor, fontFamily }` — cascades to most chart text
+- `legend.textStyle.color`, `legend.textStyle.fontFamily` → `reportTheme.textColor`, `fontFamily`
+- Both axes: `axisLine.lineStyle.color`, `axisTick.lineStyle.color`, `axisLabel.color` → `reportTheme.axisColor` / `reportTheme.textColor`; `axisLabel.fontFamily` → `fontFamily`
 - Both yAxis: `splitLine.lineStyle.color` → `reportTheme.gridColor`
+- `tooltip.extraCssText` includes `font-family: ${fontFamily};`
 - Series color fallback: `reportTheme.palette[(colorOffset+i) % palette.length]`
+
+**ECharts-native axis names** — all three axes use ECharts-native `name`/`nameLocation`/`nameGap`/`nameRotate`/`nameTextStyle` (matches the pattern in `ResultsChart.jsx`). This ensures axis labels are visible in both live canvas preview and PNG exports (DOM-overlay labels cannot be captured by `getDataURL`):
+- Left Y: `nameLocation: 'middle'`, `nameGap: 52`, `nameRotate: 90`
+- Right Y: `nameLocation: 'middle'`, `nameGap: 52`, `nameRotate: -90`
+- X axis: `nameLocation: 'middle'`, `nameGap` adaptive (46 when many labels, else 32)
+- Grid margins widen when axis names are present: `left: leftName ? 70 : 52`, `right: rightName ? 70 : 12`, `bottom: xName ? 56 : 40`
+
+**`makeSeriesLabel(field, yMode)` — `(R)` collision logic:**
+Before building series, a `leftLabelSet` is computed of all left-axis labels (with cumulative suffix when `leftYMode === 'cumulative'`). `(R)` is appended to right-axis series labels **only when** the computed label would exactly match a left-axis label. When left and right show different fields or different modes, no `(R)` suffix is added.
 
 **`MiniChart`** sub-component: renders the ECharts instance for the preview run. Uses `onInstance(chart)` callback (→ `chartInstanceRef.current`) on mount, `onInstance(null)` on unmount cleanup. Only rendered when `expanded === true` — hence the poll in `generate()`.
 
-**`__right` alias suffix:** fields that appear on both Y axes get an `__right` suffix in the series key to avoid collision. ECharts legend shows them as `"fieldName (R)"`.
+**`__right` alias suffix:** fields that appear on both Y axes get an `__right` suffix in the series key to avoid data key collision. The suffix is stripped by `makeSeriesLabel` for display; `(R)` is only appended when the resulting label would otherwise duplicate a left-axis label.
 
 ---
 
@@ -1768,6 +1787,31 @@ Each descriptor:
 
 ---
 
+### `chartDataUtils.js` — pure chart data helpers
+
+File: `frontend/src/utils/chartDataUtils.js`
+
+Extracted from `ReportInstanceCard` so the functions can be unit-tested without React or ECharts dependencies. All six exports are pure functions.
+
+**`applyDivisorNumeric(value, divisor)`** — converts a raw cell value to a Number applying `÷1e6` / `÷1e18` divisors via BigInt arithmetic to avoid float precision loss. Returns `null` for null/empty/undefined inputs. `'datetime'` divisor is treated as `raw`.
+
+**`bucketTimestamp(ts, groupBy)`** — maps a Unix-second timestamp to its bucket anchor: `'day'` → UTC midnight, `'week'` → nearest multiple of 604800, `'month'` → UTC first of month, `'none'` → `Number(ts)`.
+
+**`aggregate(values, method)`** — reduces a `number[]` using `sum` (default), `avg`, `median`, `min`, `max`, or `count`. Filters nulls/NaN before aggregating. Returns `null` for empty arrays.
+
+**`buildChartData(rows, xField, yFields, colDivisors, groupBy, yMode, aggregation, xSortDir)`** — the main chart data builder used by `ReportInstanceCard`:
+1. Groups rows into a `Map<bucketKey, { [field]: number[] }>` using `bucketTimestamp`
+2. Aggregates each bucket with `aggregate(values, aggregation)`
+3. Sorts by X value (numeric then string fallback), reversed if `xSortDir === 'desc'`
+4. Applies cumulative mode (running sum per field) if `yMode === 'cumulative'`
+5. Returns `[{ x, [field]: value, ... }, ...]`
+
+**`fmtAxisVal(val)`** — compact Y-axis label formatter: `1234567` → `"1.23M"`. Supports K/M/B/T suffixes.
+
+**`fmtXLabel(val, groupBy, xField)`** — formats an X-axis label. When `groupBy !== 'none'`, treats `val` as a Unix-second timestamp and formats with `toLocaleDateString`. Otherwise, heuristically detects Unix timestamps (1e9 < val < 2e10) and formats as dates; falls back to `String(val)`.
+
+---
+
 ### Reports architecture
 
 The Reports tab uses an **instance-based architecture** where each chart in a report is a `report_instances` row with its own chart config JSON.
@@ -1989,7 +2033,7 @@ Run: `npm test --workspace=frontend`
 
 Config: `vitest.config.js` with `environment: 'jsdom'`, `setupFiles: ['@testing-library/jest-dom/vitest']`.
 
-**14 test files, 258 tests total (as of 2026-07-14):**
+**15 test files, 314 tests total (as of 2026-07-15):**
 
 | File | Tests | Coverage |
 |---|---|---|
@@ -2007,10 +2051,13 @@ Config: `vitest.config.js` with `environment: 'jsdom'`, `setupFiles: ['@testing-
 | `components/__tests__/QueryPreviewModal.test.jsx` | ~4 | Code snippet tabs, copy button |
 | `components/__tests__/SchemaExplorer.test.jsx` | ~4 | GraphiQL embed, "Use This Query" button |
 | `components/__tests__/EndpointProfilesModal.test.jsx` | ~4 | Profile list, create, select, delete |
+| `utils/__tests__/chartDataUtils.test.js` | 56 | `buildChartData` edge cases: bucket collapsing, cumulative across grouped data, divisors, aggregation modes, empty series |
 
-**Grand total: ~476 tests (258 frontend Vitest + 211 backend Jest passing + 7 skipped)**
+**Grand total: 561 tests (314 frontend Vitest + 240 backend Jest passing + 7 skipped)**
 
-Backend test counts: 10 test files, 218 total (211 passing + 7 skipped integration tests gated by `process.env.INTEGRATION`). The 7 skipped tests in `runs.test.js` / `ponder.test.js` require a live Ponder endpoint.
+Backend test counts: 11 test files, 247 total (240 passing + 7 skipped integration tests gated by `process.env.INTEGRATION`). The 7 skipped tests in `runs.test.js` / `ponder.test.js` require a live Ponder endpoint.
+
+New backend test file: `backend/tests/addressLabels.test.js` (22 tests) — covers CRUD on address labels including UNIQUE constraint, 404 cases, and re-creation after deletion.
 
 **Important:** run Vitest from `frontend/` directory, not repo root. Root `package.json` `test` script only runs backend Jest.
 
@@ -2087,7 +2134,7 @@ CSS class patterns used:
 
 ## 16. Dependency Security Notes
 
-Last audited: **2026-07-14**.
+Last audited: **2026-07-15**.
 
 `npm audit` reports **0 vulnerabilities** across all workspaces. The following were investigated via NVD and GitHub advisories in addition to the npm advisory database:
 
@@ -2112,8 +2159,4 @@ Last audited: **2026-07-14**.
 
 Ideas that have been raised but explicitly deferred. Do not implement without checking with the user first.
 
-### Font family picker for chart labels
-
-ECharts supports `fontFamily` in any text style object (`axisLabel`, `nameTextStyle`, `legend.textStyle`, etc.). The idea would be to add `fontFamily` as a sixth key in the color scheme `theme` object, with a `<select>` in `SchemeEditor` offering a curated list of web-safe fonts (system-ui, Arial, Roboto, Segoe UI, Georgia, Consolas). No Google Fonts loading needed for the curated set.
-
-**Status as of 2026-06-03:** User said "not right now, I'm not convinced we need this." Revisit only if explicitly requested.
+*(No deferred items at this time.)*
