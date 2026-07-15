@@ -762,6 +762,19 @@ function FieldPicker({ label, selected, allColumns, exclude, onChange, colDiviso
 
 // ─── Filename builder ─────────────────────────────────────────────────────────
 
+// Max stem length (excl. .png) — leaves headroom below the 255-byte FS limit.
+const MAX_STEM = 200
+
+/** 6-char lowercase hex hash — disambiguation suffix when the stem is truncated. */
+function shortHash(str) {
+  let h = 0x811c9dc5
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i)
+    h = (h * 0x01000193) >>> 0
+  }
+  return h.toString(16).padStart(8, '0').slice(0, 6)
+}
+
 function slugify(str) {
   return String(str ?? '')
     .toLowerCase()
@@ -789,7 +802,14 @@ function buildFilename(query, label, config, startDate, endDate) {
   if (startDate) parts.push(startDate.toISOString().slice(0, 10))
   if (endDate)   parts.push(`to_${endDate.toISOString().slice(0, 10)}`)
 
-  return parts.join('_').replace(/__+/g, '_') + '.png'
+  const stem = parts.join('_').replace(/__+/g, '_') || 'chart'
+
+  // Truncate gracefully: keep a short hash suffix so truncated names don't collide.
+  if (stem.length > MAX_STEM) {
+    const hash = shortHash(stem)
+    return stem.slice(0, MAX_STEM - 7) + `_${hash}.png`
+  }
+  return stem + '.png'
 }
 
 export default ReportInstanceCard
