@@ -33,11 +33,12 @@ const DIVISOR_LABELS = { raw: 'raw', '1e6': '÷1e6', '1e18': '÷1e18' }
 const FALLBACK_COLORS = ['#e94560','#2196f3','#4caf50','#ff9800','#9c27b0','#00bcd4','#ff5722','#607d8b']
 
 function buildEChartsOption(chartData, leftFields, rightFields, leftType, rightType, fieldMeta, seriesColors, reportTheme, showLegend, groupBy, xField, leftScaleY = false, rightScaleY = false, leftYMode = 'raw', rightYMode = 'raw') {
-  const palette   = reportTheme?.palette   ?? FALLBACK_COLORS
-  const textColor = reportTheme?.textColor ?? '#c0c0c0'
-  const gridColor = reportTheme?.gridColor ?? '#333333'
-  const axisColor = reportTheme?.axisColor ?? '#555555'
-  const bgRgba    = hexToRgba(reportTheme?.bg ?? '#1a1f2e', reportTheme?.bgAlpha ?? 100)
+  const palette    = reportTheme?.palette    ?? FALLBACK_COLORS
+  const textColor  = reportTheme?.textColor  ?? '#c0c0c0'
+  const gridColor  = reportTheme?.gridColor  ?? '#333333'
+  const axisColor  = reportTheme?.axisColor  ?? '#555555'
+  const bgRgba     = hexToRgba(reportTheme?.bg ?? '#1a1f2e', reportTheme?.bgAlpha ?? 100)
+  const fontFamily = `${reportTheme?.fontFamily ?? 'Montserrat'}, sans-serif`
 
   const xLabels = chartData.map(p => fmtXLabel(p.x, groupBy, xField))
 
@@ -84,7 +85,7 @@ function buildEChartsOption(chartData, leftFields, rightFields, leftType, rightT
     return yMode === 'cumulative' ? `${name} (cumulative)` : name
   }
 
-  const axisLabelStyle = { formatter: fmtAxisVal, fontSize: 10, color: textColor, fontFamily: 'Montserrat, sans-serif' }
+  const axisLabelStyle = { formatter: fmtAxisVal, fontSize: 10, color: textColor, fontFamily: fontFamily }
   const axisLineStyle  = { lineStyle: { color: axisColor } }
 
   const yAxes = [
@@ -116,16 +117,16 @@ function buildEChartsOption(chartData, leftFields, rightFields, leftType, rightT
     },
     option: {
       backgroundColor: bgRgba,
-      textStyle: { color: textColor, fontFamily: 'Montserrat, sans-serif' },
+      textStyle: { color: textColor, fontFamily: fontFamily },
       legend: showLegend
-        ? { show: true, top: 4, textStyle: { fontSize: 10, color: textColor, fontFamily: 'Montserrat, sans-serif' } }
+        ? { show: true, top: 4, textStyle: { fontSize: 10, color: textColor, fontFamily: fontFamily } }
         : { show: false },
       grid: { left: 52, right: rightFields.length > 0 ? 52 : 12, top: showLegend ? 36 : 12, bottom: 40, containLabel: false },
-      tooltip: { trigger: 'axis', axisPointer: { type: 'cross' }, extraCssText: 'font-family: Montserrat, sans-serif;' },
+      tooltip: { trigger: 'axis', axisPointer: { type: 'cross' }, extraCssText: `font-family: ${fontFamily};` },
       xAxis: {
         type: 'category',
         data: xLabels,
-        axisLabel: { rotate: xLabels.length > 20 ? 30 : 0, fontSize: 10, color: textColor, fontFamily: 'Montserrat, sans-serif' },
+        axisLabel: { rotate: xLabels.length > 20 ? 30 : 0, fontSize: 10, color: textColor, fontFamily: fontFamily },
         axisLine: axisLineStyle,
         axisTick: axisLineStyle,
         splitLine: { show: false },

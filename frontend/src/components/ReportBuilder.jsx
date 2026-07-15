@@ -7,12 +7,13 @@ import ReportThemeEditor from './ReportThemeEditor.jsx'
 
 export function defaultReportTheme() {
   return {
-    palette:   ['#e94560', '#2196f3', '#4caf50', '#ff9800', '#9c27b0', '#00bcd4'],
-    bg:        '#1a1f2e',
-    bgAlpha:   100,
-    textColor: '#c0c0c0',
-    gridColor: '#333333',
-    axisColor: '#555555',
+    palette:    ['#e94560', '#2196f3', '#4caf50', '#ff9800', '#9c27b0', '#00bcd4'],
+    bg:         '#1a1f2e',
+    bgAlpha:    100,
+    textColor:  '#c0c0c0',
+    gridColor:  '#333333',
+    axisColor:  '#555555',
+    fontFamily: 'Montserrat',
   }
 }
 

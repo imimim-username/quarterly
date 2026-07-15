@@ -1,5 +1,20 @@
 import React, { useRef, useState } from 'react'
 
+// ─── Font options ─────────────────────────────────────────────────────────────
+
+const CHART_FONTS = [
+  'Montserrat',
+  'DM Sans',
+  'IBM Plex Sans',
+  'Inter',
+  'Lato',
+  'Nunito',
+  'Open Sans',
+  'Raleway',
+  'Roboto',
+  'Source Sans 3',
+]
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /** Ensure hex is always #rrggbb (input[type=color] requires 6-digit form). */
@@ -240,6 +255,24 @@ export default function ReportThemeEditor({ theme, onChange, defaultTheme }) {
             colors={theme.palette ?? []}
             onChange={colors => update('palette', colors)}
           />
+
+          <hr style={{ border: 'none', borderTop: '1px solid var(--color-border)', margin: '10px 0' }} />
+
+          {/* Font family */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <span style={{ fontSize: 11, color: 'var(--color-text-muted)', width: 80, flexShrink: 0 }}>
+              Font
+            </span>
+            <select
+              value={theme.fontFamily ?? 'Montserrat'}
+              onChange={e => update('fontFamily', e.target.value)}
+              style={{ fontSize: 11, fontFamily: theme.fontFamily ?? 'Montserrat', flex: 1, maxWidth: 180 }}
+            >
+              {CHART_FONTS.map(f => (
+                <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>
+              ))}
+            </select>
+          </div>
 
           <hr style={{ border: 'none', borderTop: '1px solid var(--color-border)', margin: '10px 0' }} />
 
