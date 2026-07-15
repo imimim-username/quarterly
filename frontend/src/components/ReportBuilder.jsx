@@ -218,6 +218,26 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
     delete cardRefs.current[tempId]
   }
 
+  // ── Clone instance ──
+
+  const cloneInstance = (tempId) => {
+    setInstances(prev => {
+      const idx = prev.findIndex(inst => inst._tempId === tempId)
+      if (idx < 0) return prev
+      const src = prev[idx]
+      const clone = {
+        ...src,
+        _tempId: nextTempId(),
+        id: undefined,            // treat as unsaved
+        label: src.label ? `${src.label} (copy)` : '(copy)',
+        config: { ...src.config },
+      }
+      const next = [...prev]
+      next.splice(idx + 1, 0, clone)
+      return next
+    })
+  }
+
   // ── Move instance up/down ──
 
   const moveInstance = (tempId, dir) => {
@@ -444,6 +464,7 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
               addressLabels={addressLabels}
               onUpdate={patch => updateInstance(inst._tempId, patch)}
               onDelete={() => deleteInstance(inst._tempId)}
+              onClone={() => cloneInstance(inst._tempId)}
             />
           </div>
         </div>

@@ -240,7 +240,7 @@ export function defaultInstanceConfig() {
  *    Runs a preview if needed, then returns the chart PNG and a suggested filename.
  */
 const ReportInstanceCard = forwardRef(function ReportInstanceCard(
-  { instance, allQueries, startDate, endDate, onUpdate, onDelete, reportTheme, addressLabels = [] },
+  { instance, allQueries, startDate, endDate, onUpdate, onDelete, onClone, reportTheme, addressLabels = [] },
   ref,
 ) {
   const [expanded, setExpanded] = useState(!instance.id) // new instances start expanded
@@ -665,7 +665,7 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
 
           <hr style={{ border:'none', borderTop:'1px solid var(--color-border)', margin:0 }} />
 
-          {/* Run preview button + status */}
+          {/* Run preview button + status + clone */}
           <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
             <button
               onClick={runPreview}
@@ -685,6 +685,11 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
                   : ''}
               </span>
             )}
+            <button
+              onClick={onClone}
+              title="Clone this chart instance"
+              style={{ marginLeft:'auto', background:'transparent', border:'1px solid var(--color-border)', fontSize:12, padding:'4px 12px', color:'var(--color-text-muted)', cursor:'pointer' }}
+            >⧉ Clone</button>
           </div>
 
           {/* Preview chart */}
