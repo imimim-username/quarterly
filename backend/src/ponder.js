@@ -135,7 +135,17 @@ async function fetchAllPages(endpoint, query, variables, queryDef, settings, sig
         signal: combinedSignal,
       });
 
-      const data = await response.json();
+      let data;
+      try {
+        data = await response.json();
+      } catch (jsonErr) {
+        const err = new Error(
+          `Endpoint returned non-JSON response (HTTP ${response.status}). ` +
+          `Check that the URL points to a GraphQL endpoint.`
+        );
+        err.type = 'network';
+        throw err;
+      }
       return data;
     } catch (e) {
       if (e.name === 'AbortError') {
@@ -148,6 +158,8 @@ async function fetchAllPages(endpoint, query, variables, queryDef, settings, sig
         err.type = 'timeout';
         throw err;
       }
+      // Re-throw errors we already typed (non-JSON, cancelled, timeout)
+      if (e.type) throw e;
       const err = new Error(e.message);
       err.type = 'network';
       throw err;

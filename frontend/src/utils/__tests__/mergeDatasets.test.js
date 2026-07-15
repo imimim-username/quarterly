@@ -424,6 +424,79 @@ describe('mergeDatasets — three datasets', () => {
   })
 })
 
+// ─── cumulative gap fix (BUG 4) ───────────────────────────────────────────────
+// When dataset A has keys [Jan15, Jan17] and dataset B has keys [Jan16], the
+// union xKeys = [Jan15, Jan16, Jan17]. Before the fix, A's cumulative output
+// at Jan16 was null (visual gap) even though the running total should carry
+// forward. After the fix, A emits the current running total at every union key.
+
+describe('mergeDatasets — cumulative mode carries forward over missing keys', () => {
+  it('fills carried-forward running total at keys absent from the dataset', () => {
+    // Dataset A: data at Jan15 and Jan17 only (Jan16 missing)
+    // Dataset B: data at Jan16 only (forces Jan16 into the union xKeys)
+    const dsA = {
+      id: 'a',
+      rows: [
+        { ts: DAY_JAN15, val: 10 },
+        { ts: DAY_JAN17, val: 20 },
+      ],
+      xField: 'ts', yFields: ['val'],
+      colDivisors: {}, groupBy: 'day', aggregation: 'sum', yMode: 'cumulative',
+    }
+    const dsB = {
+      id: 'b',
+      rows: [{ ts: DAY_JAN16, other: 5 }],
+      xField: 'ts', yFields: ['other'],
+      colDivisors: {}, groupBy: 'day', aggregation: 'sum', yMode: 'raw',
+    }
+    const { rows } = mergeDatasets([dsA, dsB])
+    // Jan15: cumulative = 10
+    expect(rows[0].d0_val).toBe(10)
+    // Jan16: A has no data here — running total should carry forward (10), not null
+    expect(rows[1].d0_val).toBe(10)
+    // Jan17: cumulative = 10 + 20 = 30
+    expect(rows[2].d0_val).toBe(30)
+  })
+
+  it('does NOT fill null for raw mode (gaps remain null)', () => {
+    const dsA = {
+      id: 'a',
+      rows: [
+        { ts: DAY_JAN15, val: 10 },
+        { ts: DAY_JAN17, val: 20 },
+      ],
+      xField: 'ts', yFields: ['val'],
+      colDivisors: {}, groupBy: 'day', aggregation: 'sum', yMode: 'raw',
+    }
+    const dsB = {
+      id: 'b',
+      rows: [{ ts: DAY_JAN16, other: 5 }],
+      xField: 'ts', yFields: ['other'],
+      colDivisors: {}, groupBy: 'day', aggregation: 'sum', yMode: 'raw',
+    }
+    const { rows } = mergeDatasets([dsA, dsB])
+    // Jan16: raw mode — A has no data here, stays null
+    expect(rows[1].d0_val).toBeNull()
+  })
+
+  it('handles a single dataset with all contiguous keys (no gap) correctly', () => {
+    const ds = {
+      id: 'a',
+      rows: [
+        { ts: DAY_JAN15, val: 5 },
+        { ts: DAY_JAN16, val: 10 },
+        { ts: DAY_JAN17, val: 15 },
+      ],
+      xField: 'ts', yFields: ['val'],
+      colDivisors: {}, groupBy: 'day', aggregation: 'sum', yMode: 'cumulative',
+    }
+    const { rows } = mergeDatasets([ds])
+    expect(rows[0].d0_val).toBe(5)
+    expect(rows[1].d0_val).toBe(15)
+    expect(rows[2].d0_val).toBe(30)
+  })
+})
+
 // ─── formatXLabel ─────────────────────────────────────────────────────────────
 
 describe('formatXLabel', () => {

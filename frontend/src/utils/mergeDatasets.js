@@ -140,14 +140,15 @@ export function mergeDatasets(datasets) {
 
     if (ds.yMode === 'cumulative') {
       const running = Object.fromEntries((ds.yFields ?? []).map(f => [f, 0]))
-      // iterate in sorted key order
+      // Iterate over the full sorted union of keys so that keys from other datasets
+      // that are absent in this dataset's aggMap still emit the current running total
+      // rather than null — preventing false visual gaps in the cumulative line.
       for (const key of xKeys) {
-        if (aggMap.has(key)) {
-          const point = aggMap.get(key)
-          for (const f of ds.yFields ?? []) {
-            running[f] += point[f] ?? 0
-            point[f] = running[f]
-          }
+        const point = aggMap.has(key) ? aggMap.get(key) : {}
+        if (!aggMap.has(key)) aggMap.set(key, point)
+        for (const f of ds.yFields ?? []) {
+          running[f] += point[f] ?? 0
+          point[f] = running[f]
         }
       }
     }

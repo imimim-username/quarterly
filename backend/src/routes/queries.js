@@ -106,16 +106,15 @@ module.exports = function queriesRoutes(db) {
   router.get('/', (req, res) => {
     try {
       const rows = db.prepare('SELECT * FROM queries ORDER BY category, name').all();
-      const queries = rows.map(row => {
+      const queries = [];
+      for (const row of rows) {
         try {
-          return rowToQuery(row);
+          queries.push(rowToQuery(row));
         } catch (e) {
-          console.error('invalid_persisted_json', e);
-          return res.status(500).json(e);
+          // Log and skip corrupt rows rather than aborting the entire list.
+          console.error('invalid_persisted_json — skipping query id', row.id, e);
         }
-      });
-      // If any rowToQuery caused an early response, queries array may be incomplete
-      if (res.headersSent) return;
+      }
       res.json(queries);
     } catch (e) {
       res.status(500).json({ error: 'db_error', message: e.message });
@@ -290,11 +289,15 @@ module.exports = function queriesRoutes(db) {
 
         if (existing && !isBuiltin) {
           // Non-builtin: upsert by name
+          const tsRawImportUpd = item.timestamp_extraction == null ? null
+            : typeof item.timestamp_extraction === 'string' ? item.timestamp_extraction
+            : JSON.stringify(item.timestamp_extraction);
           db.prepare(`
             UPDATE queries SET description=?, category=?, gql=?, variable_defs=?,
               result_path=?, pagination_style=?, cursor_path=?, has_next_path=?,
               date_format=?, chain_mode=?, chain_var_name=?, chain_field=?,
-              field_meta=?, key_field=?, is_builtin=?, computed_columns=?, updated_at=?
+              field_meta=?, key_field=?, is_builtin=?, chart_views=?, computed_columns=?,
+              timestamp_extraction=?, updated_at=?
             WHERE name=?
           `).run(
             item.description || '', item.category || 'General', item.gql,
@@ -305,7 +308,9 @@ module.exports = function queriesRoutes(db) {
             item.chain_var_name || 'chain', item.chain_field || 'chain',
             typeof item.field_meta === 'string' ? item.field_meta : JSON.stringify(item.field_meta || {}),
             item.key_field || 'id', isBuiltin,
+            typeof item.chart_views === 'string' ? item.chart_views : JSON.stringify(item.chart_views || []),
             typeof item.computed_columns === 'string' ? item.computed_columns : JSON.stringify(item.computed_columns || []),
+            tsRawImportUpd,
             now,
             name
           );
@@ -314,11 +319,15 @@ module.exports = function queriesRoutes(db) {
         }
 
         // Insert new
+        const tsRawImportIns = item.timestamp_extraction == null ? null
+          : typeof item.timestamp_extraction === 'string' ? item.timestamp_extraction
+          : JSON.stringify(item.timestamp_extraction);
         const stmt = db.prepare(`
           INSERT INTO queries (name, description, category, gql, variable_defs, result_path,
             pagination_style, cursor_path, has_next_path, date_format, chain_mode, chain_var_name,
-            chain_field, field_meta, key_field, is_builtin, computed_columns, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            chain_field, field_meta, key_field, is_builtin, chart_views, computed_columns,
+            timestamp_extraction, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
         const info = stmt.run(
           name, item.description || '', item.category || 'General', item.gql,
@@ -329,7 +338,9 @@ module.exports = function queriesRoutes(db) {
           item.chain_var_name || 'chain', item.chain_field || 'chain',
           typeof item.field_meta === 'string' ? item.field_meta : JSON.stringify(item.field_meta || {}),
           item.key_field || 'id', isBuiltin,
+          typeof item.chart_views === 'string' ? item.chart_views : JSON.stringify(item.chart_views || []),
           typeof item.computed_columns === 'string' ? item.computed_columns : JSON.stringify(item.computed_columns || []),
+          tsRawImportIns,
           now, now
         );
         results.push({ name, action: 'created', id: info.lastInsertRowid });

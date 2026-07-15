@@ -243,6 +243,20 @@ describe('fmtAxisVal', () => {
     expect(fmtAxisVal(-1500)).toBe('-1.5K')
   })
   it('zero', () => expect(fmtAxisVal(0)).toBe('0'))
+
+  // BUG 3 fix: non-finite inputs should not produce garbage like "InfinityT"
+  it('Infinity returns "Infinity" (not "InfinityT")', () => {
+    expect(fmtAxisVal(Infinity)).toBe('Infinity')
+  })
+  it('-Infinity returns "-Infinity"', () => {
+    expect(fmtAxisVal(-Infinity)).toBe('-Infinity')
+  })
+  it('NaN returns "NaN"', () => {
+    expect(fmtAxisVal(NaN)).toBe('NaN')
+  })
+  it('undefined coerces to NaN → "NaN"', () => {
+    expect(fmtAxisVal(undefined)).toBe('NaN')
+  })
 })
 
 // ─── fmtXLabel ────────────────────────────────────────────────────────────────

@@ -185,8 +185,13 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
   const handleDelete = async () => {
     if (!report?.id) return
     if (!window.confirm(`Delete report "${name}"?`)) return
-    await deleteReport(report.id)
-    onDelete?.()
+    try {
+      await deleteReport(report.id)
+      onDelete?.()
+    } catch (e) {
+      console.error('Failed to delete report:', e)
+      alert(`Failed to delete report: ${e.message ?? 'Unknown error'}`)
+    }
   }
 
   // ── Add instance ──

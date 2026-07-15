@@ -204,6 +204,39 @@ if (nativeAvailable) {
     });
   });
 
+  describe('GET /api/queries — corrupt row skipped (BUG 5 fix)', () => {
+    test('one corrupt row does not fail entire list — returns remaining good rows', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const now = new Date().toISOString();
+
+      // Insert a valid query via the normal route
+      const good = await request(app).post('/api/queries').send({
+        name: 'Good Query', gql: '{ x }', result_path: 'data.x',
+      });
+      expect(good.status).toBe(201);
+
+      // Directly insert a row with corrupt variable_defs JSON (bypasses validation)
+      db.prepare(
+        `INSERT INTO queries (name, description, category, gql, variable_defs, result_path,
+          pagination_style, cursor_path, has_next_path, date_format, chain_mode, chain_var_name,
+          chain_field, field_meta, key_field, is_builtin, chart_views, computed_columns,
+          timestamp_extraction, created_at, updated_at)
+         VALUES (?, '', 'General', ?, ?, 'data.x', 'offset', '', '', 'unix_seconds', 'filter',
+                 'chain', 'chain', '{}', 'id', 0, '[]', '[]', NULL, ?, ?)`
+      ).run('Corrupt Query', '{ bad }', 'NOT VALID JSON', now, now);
+
+      const res = await request(app).get('/api/queries');
+      // Should still return 200 (not 500)
+      expect(res.status).toBe(200);
+      // Should include the good query
+      expect(res.body.some(q => q.name === 'Good Query')).toBe(true);
+      // Should NOT include the corrupt query (skipped)
+      expect(res.body.some(q => q.name === 'Corrupt Query')).toBe(false);
+      db.close();
+    });
+  });
+
   describe('POST /api/queries/import', () => {
     const builtinQuery = {
       name: 'My Builtin',
@@ -234,6 +267,79 @@ if (nativeAvailable) {
       const list = await request(app).get('/api/queries');
       expect(list.body).toHaveLength(1);
       expect(list.body[0].description).toBe('Updated description');
+      db.close();
+    });
+
+    // BUG 6 fix: import UPDATE was omitting chart_views and timestamp_extraction
+    test('import UPDATE preserves chart_views when re-importing non-builtin', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const chartViews = [{ type: 'bar', xField: 'ts', yFields: ['val'] }];
+      const userQuery = {
+        ...builtinQuery,
+        is_builtin: 0, name: 'User Query With Charts',
+        chart_views: chartViews,
+      };
+      await request(app).post('/api/queries/import').send([userQuery]);
+      // Re-import with updated description — chart_views should be preserved
+      await request(app).post('/api/queries/import').send([{ ...userQuery, description: 'v2' }]);
+
+      const list = await request(app).get('/api/queries');
+      expect(list.body).toHaveLength(1);
+      expect(list.body[0].description).toBe('v2');
+      expect(list.body[0].chart_views).toEqual(chartViews);
+      db.close();
+    });
+
+    test('import UPDATE preserves timestamp_extraction when re-importing non-builtin', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const tsExtraction = { field: 'createdAt', format: 'unix_seconds' };
+      const userQuery = {
+        ...builtinQuery,
+        is_builtin: 0, name: 'User Query With TS',
+        timestamp_extraction: tsExtraction,
+      };
+      await request(app).post('/api/queries/import').send([userQuery]);
+      // Re-import — timestamp_extraction should be updated
+      const tsV2 = { field: 'updatedAt', format: 'iso8601' };
+      await request(app).post('/api/queries/import').send([{ ...userQuery, timestamp_extraction: tsV2 }]);
+
+      const list = await request(app).get('/api/queries');
+      expect(list.body).toHaveLength(1);
+      expect(list.body[0].timestamp_extraction).toEqual(tsV2);
+      db.close();
+    });
+
+    // BUG 7 fix: import INSERT was omitting timestamp_extraction and chart_views
+    test('import INSERT persists chart_views for new non-builtin queries', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const chartViews = [{ type: 'line', xField: 'ts', yFields: ['amount'] }];
+      const res = await request(app).post('/api/queries/import').send([{
+        ...builtinQuery,
+        is_builtin: 0, name: 'New Query With Charts',
+        chart_views: chartViews,
+      }]);
+      expect(res.status).toBe(200);
+
+      const list = await request(app).get('/api/queries');
+      expect(list.body[0].chart_views).toEqual(chartViews);
+      db.close();
+    });
+
+    test('import INSERT persists timestamp_extraction for new non-builtin queries', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const tsExtraction = { field: 'createdAt', format: 'unix_seconds' };
+      await request(app).post('/api/queries/import').send([{
+        ...builtinQuery,
+        is_builtin: 0, name: 'New Query With TS',
+        timestamp_extraction: tsExtraction,
+      }]);
+
+      const list = await request(app).get('/api/queries');
+      expect(list.body[0].timestamp_extraction).toEqual(tsExtraction);
       db.close();
     });
   });

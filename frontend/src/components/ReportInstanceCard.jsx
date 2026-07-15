@@ -413,9 +413,35 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
       // Ensure card is expanded so MiniChart mounts and chartInstanceRef can be set
       setExpanded(true)
 
-      // Ensure preview data is available
-      if (runStatus !== 'done') {
+      // Ensure preview data is available.
+      // If a preview is already running, wait for it to finish rather than
+      // firing a second concurrent request.
+      if (runStatus === 'running') {
+        // An in-flight preview is already running — wait for it to finish (up to 60 s)
+        // rather than firing a second concurrent GraphQL request.
+        // We detect completion by polling chartInstanceRef: once MiniChart mounts and
+        // initialises ECharts the ref becomes non-null, meaning runStatus has reached 'done'.
+        // If after 60 s the ref is still null the preview failed; bail early.
+        let settled = false
+        for (let i = 0; i < 600; i++) {
+          await new Promise(r => setTimeout(r, 100))
+          if (chartInstanceRef.current) { settled = true; break }
+        }
+        if (!settled) {
+          const filename = buildFilename(query, label, config, startDate, endDate)
+          return { dataUrl: null, filename }
+        }
+      } else if (runStatus !== 'done') {
         await runPreview()
+        // Give React one tick to commit state (runStatus → 'done' or 'error') and
+        // for MiniChart to mount and initialise the ECharts instance.
+        // If after a short grace period the chart ref is still null the preview failed;
+        // bail immediately rather than burning the full 5-second poll timeout.
+        await new Promise(r => setTimeout(r, 50))
+        if (!chartInstanceRef.current) {
+          const filename = buildFilename(query, label, config, startDate, endDate)
+          return { dataUrl: null, filename }
+        }
       }
 
       // Poll until ECharts instance is ready (React re-renders + MiniChart init).

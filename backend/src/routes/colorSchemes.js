@@ -48,15 +48,23 @@ module.exports = function colorSchemesRoutes(db) {
 
   // GET /api/color-schemes — list all
   router.get('/', (req, res) => {
-    const rows = db.prepare('SELECT * FROM color_schemes ORDER BY id').all();
-    res.json(rows.map(parse));
+    try {
+      const rows = db.prepare('SELECT * FROM color_schemes ORDER BY id').all();
+      res.json(rows.map(parse));
+    } catch (e) {
+      res.status(500).json({ error: 'db_error', message: e.message });
+    }
   });
 
   // GET /api/color-schemes/:id — get one
   router.get('/:id', (req, res) => {
-    const row = db.prepare('SELECT * FROM color_schemes WHERE id = ?').get(req.params.id);
-    if (!row) return res.status(404).json({ error: 'not_found' });
-    res.json(parse(row));
+    try {
+      const row = db.prepare('SELECT * FROM color_schemes WHERE id = ?').get(req.params.id);
+      if (!row) return res.status(404).json({ error: 'not_found' });
+      res.json(parse(row));
+    } catch (e) {
+      res.status(500).json({ error: 'db_error', message: e.message });
+    }
   });
 
   // POST /api/color-schemes — create
