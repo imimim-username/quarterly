@@ -40,55 +40,19 @@ function normaliseTheme(partial) {
  *   cancelled  — true if the user dismissed the picker (AbortError)
  *   error      — human-readable string if the API threw for any other reason
  */
-async function debugFileSystemAccess() {
-  const d = {
-    'showDirectoryPicker type' : typeof window.showDirectoryPicker,
-    'isSecureContext'          : window.isSecureContext,
-    'location'                 : window.location.href,
-    'in iframe (window===top)' : window === window.top,
-    'userAgent'                : navigator.userAgent,
-    'navigator.brave exists'   : navigator.brave != null,
-  }
-
-  // Feature Policy / Permissions Policy — tells us if the API is blocked at the
-  // iframe/document level (relevant if the app is embedded or uses an iframe).
-  try {
-    const fp = document.featurePolicy ?? document.permissionsPolicy
-    if (fp) {
-      d['featurePolicy.allowsFeature("file-system")'] = fp.allowsFeature('file-system')
-      d['featurePolicy.allowsFeature("file-system-access")'] = fp.allowsFeature('file-system-access')
-    } else {
-      d['featurePolicy'] = 'not available'
-    }
-  } catch (e) {
-    d['featurePolicy error'] = String(e)
-  }
-
-  // navigator.brave.isBrave() is async — tells us if this is actually Brave
-  try {
-    if (navigator.brave?.isBrave) {
-      d['navigator.brave.isBrave()'] = await navigator.brave.isBrave()
-    }
-  } catch (e) {
-    d['navigator.brave.isBrave() error'] = String(e)
-  }
-
-  console.group('%c[FSA Debug] File System Access diagnostics', 'font-weight:bold;color:#4caf50')
-  console.table(d)
-  console.groupEnd()
-  return d
-}
-
+/**
+ * Try to open a native folder picker (File System Access API).
+ * Returns { dirHandle, cancelled, error }.
+ *   dirHandle  — FileSystemDirectoryHandle on success
+ *   cancelled  — true if the user dismissed the picker
+ *   error      — non-null if the API is unavailable or threw unexpectedly
+ *
+ * Falls back gracefully: callers treat dirHandle=null as "use ZIP download".
+ */
 async function pickDirectory() {
-  const debug = await debugFileSystemAccess()
-
   if (!window.showDirectoryPicker) {
-    const lines = Object.entries(debug).map(([k, v]) => `  ${k}: ${v}`).join('\n')
-    return {
-      dirHandle: null,
-      cancelled: false,
-      error: `File System Access API unavailable (showDirectoryPicker is missing).\n\nDiagnostics:\n${lines}\n\nPaste the "[FSA Debug]" table from DevTools → Console here for further help.`,
-    }
+    // API absent — browser doesn't support it or a privacy setting blocks it.
+    return { dirHandle: null, cancelled: false, error: 'unavailable' }
   }
   try {
     const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' })
@@ -97,12 +61,8 @@ async function pickDirectory() {
     if (e?.name === 'AbortError') {
       return { dirHandle: null, cancelled: true, error: null }
     }
-    console.error('[pickDirectory] showDirectoryPicker threw:', e.name, e.message, e)
-    return {
-      dirHandle: null,
-      cancelled: false,
-      error: `Folder picker threw ${e.name}: ${e.message}\n\nPaste the "[FSA Debug]" table from DevTools → Console here for further help.`,
-    }
+    console.error('[pickDirectory]', e)
+    return { dirHandle: null, cancelled: false, error: e?.message ?? String(e) }
   }
 }
 
@@ -118,26 +78,7 @@ async function writePngToDir(dirHandle, filename, dataUrl) {
 
 /**
  * Fallback for browsers where showDirectoryPicker is unavailable.
- * Triggers individual <a download> clicks sequentially.
- * The browser may ask once "allow this site to download multiple files?" —
- * after that one prompt all files download automatically to the Downloads folder.
- */
-async function downloadFilesIndividually(pngs) {
-  for (let i = 0; i < pngs.length; i++) {
-    const { dataUrl, filename } = pngs[i]
-    const a = document.createElement('a')
-    a.href = dataUrl
-    a.download = filename
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    // Brief pause between triggers so the browser doesn't coalesce/drop them
-    if (i < pngs.length - 1) await new Promise(r => setTimeout(r, 200))
-  }
-}
-
-/**
- * Single-file ZIP fallback — kept for external use / testing.
+ * Bundles all PNGs into a single ZIP and triggers one download dialog.
  */
 function downloadAsZip(pngs) {
   const files = pngs.map(({ dataUrl, filename }) => {
@@ -415,8 +356,7 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
     // User dismissed the picker — do nothing.
     if (cancelled) return
 
-    // Picker unavailable — fall through to ZIP download.
-    if (pickerError) setError('')
+    // Picker unavailable or blocked — fall through silently to ZIP download.
 
     // Snapshot the instance list so reorders/deletions mid-run don't affect the loop.
     const snap = [...instances]
