@@ -108,7 +108,7 @@ function fmtXLabel(val, groupBy, xField) {
   return String(val)
 }
 
-function buildEChartsOption(chartData, leftFields, rightFields, leftType, rightType, fieldMeta, seriesColors, reportTheme, showLegend, groupBy, xField, leftScaleY = false, rightScaleY = false) {
+function buildEChartsOption(chartData, leftFields, rightFields, leftType, rightType, fieldMeta, seriesColors, reportTheme, showLegend, groupBy, xField, leftScaleY = false, rightScaleY = false, leftYMode = 'raw', rightYMode = 'raw') {
   const palette   = reportTheme?.palette   ?? FALLBACK_COLORS
   const textColor = reportTheme?.textColor ?? '#c0c0c0'
   const gridColor = reportTheme?.gridColor ?? '#333333'
@@ -117,16 +117,23 @@ function buildEChartsOption(chartData, leftFields, rightFields, leftType, rightT
 
   const xLabels = chartData.map(p => fmtXLabel(p.x, groupBy, xField))
 
-  const makeSeries = (fields, yAxisIdx, type, colorOffset) =>
+  // Build a display label for a field, with optional "(R)" and "(cumulative)" suffixes
+  const makeSeriesLabel = (f, yMode) => {
+    const baseField = f.replace(/__right$/, '')
+    const baseLabel = fieldMeta[baseField]?.label || baseField
+    const rSuffix   = f.endsWith('__right') ? ' (R)' : ''
+    const cumSuffix = yMode === 'cumulative' ? ' (cumulative)' : ''
+    return `${baseLabel}${rSuffix}${cumSuffix}`
+  }
+
+  const makeSeries = (fields, yAxisIdx, type, colorOffset, yMode) =>
     fields.map((f, i) => {
       // rightFields may contain aliased names like "amount__right" when the same
       // field is used on both axes; resolve back to the base name for meta/color lookup
       const baseField = f.replace(/__right$/, '')
       const color = seriesColors[baseField] ?? palette[(colorOffset + i) % palette.length]
-      const baseLabel = fieldMeta[baseField]?.label || baseField
-      const label = f.endsWith('__right') ? `${baseLabel} (R)` : baseLabel
       return {
-        name: label,
+        name: makeSeriesLabel(f, yMode),
         type: type === 'area' ? 'line' : type,
         yAxisIndex: yAxisIdx,
         data: chartData.map(p => p[f] ?? null),
@@ -140,12 +147,31 @@ function buildEChartsOption(chartData, leftFields, rightFields, leftType, rightT
       }
     })
 
+  // Build a Y-axis name from the field list (joined labels, + "(cumulative)" if applicable)
+  const makeAxisName = (fields, yMode) => {
+    if (!fields.length) return undefined
+    const labels = fields.map(f => {
+      const base = f.replace(/__right$/, '')
+      return fieldMeta[base]?.label || base
+    })
+    // Deduplicate (same field on both axes shows same base label)
+    const unique = [...new Set(labels)]
+    const name = unique.join(', ')
+    return yMode === 'cumulative' ? `${name} (cumulative)` : name
+  }
+
   const axisLabelStyle = { formatter: fmtAxisVal, fontSize: 10, color: textColor }
   const axisLineStyle  = { lineStyle: { color: axisColor } }
+  const axisNameStyle  = { fontSize: 10, color: textColor, padding: [0, 0, 0, 0] }
 
+  const leftAxisName = makeAxisName(leftFields, leftYMode)
   const yAxes = [
     {
       type: 'value',
+      name: leftAxisName,
+      nameLocation: 'middle',
+      nameGap: 42,
+      nameTextStyle: axisNameStyle,
       axisLabel: axisLabelStyle,
       axisLine: axisLineStyle,
       axisTick: axisLineStyle,
@@ -154,8 +180,13 @@ function buildEChartsOption(chartData, leftFields, rightFields, leftType, rightT
     },
   ]
   if (rightFields.length > 0) {
+    const rightAxisName = makeAxisName(rightFields, rightYMode)
     yAxes.push({
       type: 'value',
+      name: rightAxisName,
+      nameLocation: 'middle',
+      nameGap: 48,
+      nameTextStyle: axisNameStyle,
       axisLabel: axisLabelStyle,
       axisLine: axisLineStyle,
       axisTick: axisLineStyle,
@@ -170,7 +201,7 @@ function buildEChartsOption(chartData, leftFields, rightFields, leftType, rightT
     legend: showLegend
       ? { show: true, top: 4, textStyle: { fontSize: 10, color: textColor } }
       : { show: false },
-    grid: { left: 52, right: rightFields.length > 0 ? 52 : 12, top: showLegend ? 36 : 12, bottom: 40, containLabel: false },
+    grid: { left: 12, right: 12, top: showLegend ? 36 : 12, bottom: 40, containLabel: true },
     tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
     xAxis: {
       type: 'category',
@@ -182,8 +213,8 @@ function buildEChartsOption(chartData, leftFields, rightFields, leftType, rightT
     },
     yAxis: yAxes,
     series: [
-      ...makeSeries(leftFields, 0, leftType, 0),
-      ...makeSeries(rightFields, rightFields.length > 0 ? 1 : 0, rightType, leftFields.length),
+      ...makeSeries(leftFields, 0, leftType, 0, leftYMode),
+      ...makeSeries(rightFields, rightFields.length > 0 ? 1 : 0, rightType, leftFields.length, rightYMode),
     ],
   }
 }
@@ -350,6 +381,8 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
       config.xField,
       config.leftScaleY ?? false,
       config.rightScaleY ?? false,
+      config.leftYMode ?? 'raw',
+      config.rightYMode ?? 'raw',
     ),
     [mergedChartData, effectiveRightFields, config, fieldMeta, reportTheme]
   )
