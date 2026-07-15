@@ -42,7 +42,17 @@ function normaliseTheme(partial) {
  */
 async function pickDirectory() {
   if (!window.showDirectoryPicker) {
-    return { dirHandle: null, cancelled: false, error: null } // unsupported browser
+    // Brave Shields can silently remove showDirectoryPicker on a Chromium browser
+    // that would otherwise support it. Detect Brave via the navigator.brave sentinel
+    // and surface a specific fix rather than silently falling back to ZIP.
+    const isBrave = window.navigator?.brave != null
+    return {
+      dirHandle: null,
+      cancelled: false,
+      error: isBrave
+        ? 'Brave Shields is blocking the folder picker. Click the lion icon in the address bar, disable Shields for this page, then try again.'
+        : null, // Firefox / Safari: expected — fall through to ZIP silently
+    }
   }
   try {
     const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' })
@@ -52,7 +62,18 @@ async function pickDirectory() {
       // User explicitly cancelled the picker — not an error
       return { dirHandle: null, cancelled: true, error: null }
     }
-    // Anything else (SecurityError, NotAllowedError, etc.) — surface to the user
+    // Brave can also block the call (rather than removing the function) and surface
+    // that as a SecurityError / NotAllowedError — detect Brave here too.
+    const isBrave = window.navigator?.brave != null
+    if (isBrave) {
+      console.warn('[pickDirectory] Brave blocked showDirectoryPicker:', e)
+      return {
+        dirHandle: null,
+        cancelled: false,
+        error: 'Brave Shields is blocking the folder picker. Click the lion icon in the address bar, disable Shields for this page, then try again.',
+      }
+    }
+    // Anything else — surface to the user
     console.error('[pickDirectory]', e)
     return { dirHandle: null, cancelled: false, error: e?.message ?? String(e) }
   }
@@ -349,14 +370,12 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
     if (cancelled) return
 
     // Picker threw a non-cancellation error (e.g. Brave Shields blocked it).
-    // Show the error and fall through to the ZIP fallback so the user still
-    // gets their files, but knows something went wrong.
+    // Show the message and bail out — do NOT fall through to ZIP, because the
+    // user explicitly wants individual files in a folder and should fix the
+    // underlying issue rather than receiving a ZIP they didn't ask for.
     if (pickerError) {
-      setError(
-        `Folder picker failed: "${pickerError}". ` +
-        `If you're on Brave, try disabling Shields for this page (lion icon in the address bar). ` +
-        `Falling back to ZIP download.`
-      )
+      setError(pickerError)
+      return
     }
 
     // Snapshot the instance list so reorders/deletions mid-run don't affect the loop.
