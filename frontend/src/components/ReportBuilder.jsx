@@ -34,15 +34,27 @@ function normaliseTheme(partial) {
 // ─── PNG generation helpers ───────────────────────────────────────────────────
 
 /**
- * Try to open a folder picker (File System Access API — Chrome/Edge only).
- * Returns a FileSystemDirectoryHandle or null if unsupported/cancelled.
+ * Try to open a folder picker (File System Access API).
+ * Returns { dirHandle, cancelled, error }.
+ *   dirHandle  — FileSystemDirectoryHandle on success
+ *   cancelled  — true if the user dismissed the picker (AbortError)
+ *   error      — human-readable string if the API threw for any other reason
  */
 async function pickDirectory() {
-  if (!window.showDirectoryPicker) return null
+  if (!window.showDirectoryPicker) {
+    return { dirHandle: null, cancelled: false, error: null } // unsupported browser
+  }
   try {
-    return await window.showDirectoryPicker({ mode: 'readwrite' })
-  } catch {
-    return null // User cancelled or permission denied
+    const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' })
+    return { dirHandle, cancelled: false, error: null }
+  } catch (e) {
+    if (e?.name === 'AbortError') {
+      // User explicitly cancelled the picker — not an error
+      return { dirHandle: null, cancelled: true, error: null }
+    }
+    // Anything else (SecurityError, NotAllowedError, etc.) — surface to the user
+    console.error('[pickDirectory]', e)
+    return { dirHandle: null, cancelled: false, error: e?.message ?? String(e) }
   }
 }
 
@@ -331,15 +343,28 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
 
     // showDirectoryPicker must be called in a user-gesture handler — do it here
     // before yielding to React state updates.
-    const dirHandle = await pickDirectory()
+    const { dirHandle, cancelled, error: pickerError } = await pickDirectory()
+
+    // User dismissed the picker — do nothing.
+    if (cancelled) return
+
+    // Picker threw a non-cancellation error (e.g. Brave Shields blocked it).
+    // Show the error and fall through to the ZIP fallback so the user still
+    // gets their files, but knows something went wrong.
+    if (pickerError) {
+      setError(
+        `Folder picker failed: "${pickerError}". ` +
+        `If you're on Brave, try disabling Shields for this page (lion icon in the address bar). ` +
+        `Falling back to ZIP download.`
+      )
+    }
 
     // Snapshot the instance list so reorders/deletions mid-run don't affect the loop.
     const snap = [...instances]
 
     cancelRef.current = false
     setGenerating(true)
-    setGenStatus('Starting…')
-    setError('')
+    setGenStatus(dirHandle ? 'Saving to folder…' : 'Building ZIP…')
 
     // Fire and forget — the UI stays fully interactive while files save in the background.
     void runGenerateLoop(dirHandle, snap)
