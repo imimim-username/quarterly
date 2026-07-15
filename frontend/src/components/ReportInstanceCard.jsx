@@ -739,18 +739,43 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
 
           {/* Preview chart */}
           {runStatus === 'done' && mergedChartData.length > 0 && (
-            <div>
-              {(axisNames?.left || axisNames?.right) && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0 4px 3px', fontSize: 9, color: reportTheme?.textColor ?? '#c0c0c0', opacity: 0.8 }}>
-                  <span>{axisNames.left ?? ''}</span>
-                  {axisNames.right && <span>{axisNames.right}</span>}
-                </div>
-              )}
+            <div style={{ position: 'relative' }}>
               <MiniChart
                 option={echartsOption}
                 height={240}
                 onInstance={inst => { chartInstanceRef.current = inst }}
               />
+              {/* Axis name labels — rotated, overlaid on the 52 px side margins */}
+              {axisNames?.left && (
+                <div style={{
+                  position: 'absolute', top: '50%', left: 0,
+                  width: 52, height: 52, marginTop: -26,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  pointerEvents: 'none',
+                }}>
+                  <span style={{
+                    fontSize: 10, color: reportTheme?.textColor ?? '#c0c0c0',
+                    transform: 'rotate(-90deg)',
+                    whiteSpace: 'nowrap', maxWidth: 200,
+                    overflow: 'hidden', textOverflow: 'ellipsis',
+                  }}>{axisNames.left}</span>
+                </div>
+              )}
+              {axisNames?.right && (
+                <div style={{
+                  position: 'absolute', top: '50%', right: 0,
+                  width: 52, height: 52, marginTop: -26,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  pointerEvents: 'none',
+                }}>
+                  <span style={{
+                    fontSize: 10, color: reportTheme?.textColor ?? '#c0c0c0',
+                    transform: 'rotate(90deg)',
+                    whiteSpace: 'nowrap', maxWidth: 200,
+                    overflow: 'hidden', textOverflow: 'ellipsis',
+                  }}>{axisNames.right}</span>
+                </div>
+              )}
             </div>
           )}
 
