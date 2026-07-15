@@ -41,17 +41,25 @@ function normaliseTheme(partial) {
  *   error      — human-readable string if the API threw for any other reason
  */
 async function pickDirectory() {
+  // Log the actual availability so it shows up in DevTools → Console for debugging.
+  console.log('[pickDirectory] window.showDirectoryPicker =', typeof window.showDirectoryPicker,
+    '| isSecureContext =', window.isSecureContext,
+    '| location =', window.location.href)
+
   if (!window.showDirectoryPicker) {
-    // Brave Shields can silently remove showDirectoryPicker on a Chromium browser
-    // that would otherwise support it. Detect Brave via the navigator.brave sentinel
-    // and surface a specific fix rather than silently falling back to ZIP.
-    const isBrave = window.navigator?.brave != null
+    // The API is missing.  Two known causes:
+    //   1. Page is not a secure context — must be https:// or http://localhost
+    //      (accessing via an IP address like 192.168.x.x counts as insecure)
+    //   2. Brave's global File System Access setting is set to Blocked —
+    //      check brave://settings/content/filesystem and set it to "Ask"
+    const secureCtx = window.isSecureContext
+    const hint = !secureCtx
+      ? 'This page is not a secure context (check that you\'re using http://localhost, not an IP address).'
+      : 'Check brave://settings/content/filesystem — make sure it is set to "Ask", not "Blocked".'
     return {
       dirHandle: null,
       cancelled: false,
-      error: isBrave
-        ? 'Brave Shields is blocking the folder picker. Click the lion icon in the address bar, disable Shields for this page, then try again.'
-        : null, // Firefox / Safari: expected — fall through to ZIP silently
+      error: `File System Access API unavailable (window.showDirectoryPicker is missing). ${hint}`,
     }
   }
   try {
@@ -62,20 +70,9 @@ async function pickDirectory() {
       // User explicitly cancelled the picker — not an error
       return { dirHandle: null, cancelled: true, error: null }
     }
-    // Brave can also block the call (rather than removing the function) and surface
-    // that as a SecurityError / NotAllowedError — detect Brave here too.
-    const isBrave = window.navigator?.brave != null
-    if (isBrave) {
-      console.warn('[pickDirectory] Brave blocked showDirectoryPicker:', e)
-      return {
-        dirHandle: null,
-        cancelled: false,
-        error: 'Brave Shields is blocking the folder picker. Click the lion icon in the address bar, disable Shields for this page, then try again.',
-      }
-    }
-    // Anything else — surface to the user
-    console.error('[pickDirectory]', e)
-    return { dirHandle: null, cancelled: false, error: e?.message ?? String(e) }
+    // API threw for some other reason (SecurityError, NotAllowedError, etc.)
+    console.error('[pickDirectory] showDirectoryPicker threw:', e.name, e.message, e)
+    return { dirHandle: null, cancelled: false, error: `Folder picker failed (${e.name}: ${e.message}). Check brave://settings/content/filesystem.` }
   }
 }
 
