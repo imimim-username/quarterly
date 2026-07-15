@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { listQueries, createReport, updateReport, deleteReport, bulkSaveReportInstances, listColorSchemes } from '../api/client.js'
 import ReportInstanceCard, { defaultInstanceConfig } from './ReportInstanceCard.jsx'
 import ReportThemeEditor from './ReportThemeEditor.jsx'
+import { buildZipBytes } from '../utils/zipBuilder.js'
 
 // ─── Report-level theme helpers ───────────────────────────────────────────────
 
@@ -55,16 +56,24 @@ async function writePngToDir(dirHandle, filename, dataUrl) {
   await writable.close()
 }
 
-/** Fallback: trigger individual browser downloads for each PNG. */
-async function downloadAsZip(pngs) {
-  for (const { dataUrl, filename } of pngs) {
-    const a = document.createElement('a')
-    a.href = dataUrl
-    a.download = filename
-    a.click()
-    // Small delay so the browser can process each download before the next
-    await new Promise(r => setTimeout(r, 300))
-  }
+/**
+ * Fallback for browsers without showDirectoryPicker (Firefox, Safari).
+ * Bundles all PNGs into a single ZIP and triggers one download dialog.
+ */
+function downloadAsZip(pngs) {
+  const files = pngs.map(({ dataUrl, filename }) => {
+    const base64 = dataUrl.split(',')[1]
+    const data = Uint8Array.from(atob(base64), c => c.charCodeAt(0))
+    return { name: filename, data }
+  })
+  const zipBytes = buildZipBytes(files)
+  const blob = new Blob([zipBytes], { type: 'application/zip' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'report_charts.zip'
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
 
 // ─── Temp instance ID counter (client-side only) ──────────────────────────────
@@ -403,6 +412,13 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
       {genStatus && (
         <div style={{ fontSize:12, color: generating ? 'var(--color-text-muted)' : 'var(--color-success)' }}>
           {genStatus}
+        </div>
+      )}
+
+      {/* Folder-save availability hint — only shown when not currently generating */}
+      {!generating && instances.length > 0 && !window.showDirectoryPicker && (
+        <div style={{ fontSize:11, color:'var(--color-text-muted)', fontStyle:'italic' }}>
+          ℹ️ Your browser doesn't support silent folder saving. PNGs will be bundled into a single ZIP download instead. Use Chrome or Edge to save files directly to a folder.
         </div>
       )}
 
