@@ -188,6 +188,7 @@ function buildEChartsOption(chartData, leftFields, rightFields, leftType, rightT
     axisNames: {
       left: makeAxisName(leftFields, leftYMode),
       right: rightFields.length > 0 ? makeAxisName(rightFields, rightYMode) : null,
+      x: xField ? (fieldMeta[xField]?.label || xField) : null,
     },
     option: {
       backgroundColor: bgRgba,
@@ -745,11 +746,12 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
                 height={240}
                 onInstance={inst => { chartInstanceRef.current = inst }}
               />
-              {/* Axis name labels — rotated, overlaid on the 52 px side margins */}
+              {/* Left Y axis label — sits in the outermost 20 px of the 52 px left margin,
+                  leaving the inner ~32 px free for tick number text */}
               {axisNames?.left && (
                 <div style={{
-                  position: 'absolute', top: '50%', left: 0,
-                  width: 52, height: 52, marginTop: -26,
+                  position: 'absolute', top: 0, bottom: 0, left: 0,
+                  width: 20,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   pointerEvents: 'none',
                 }}>
@@ -761,10 +763,11 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
                   }}>{axisNames.left}</span>
                 </div>
               )}
+              {/* Right Y axis label — sits in the outermost 20 px of the right margin */}
               {axisNames?.right && (
                 <div style={{
-                  position: 'absolute', top: '50%', right: 0,
-                  width: 52, height: 52, marginTop: -26,
+                  position: 'absolute', top: 0, bottom: 0, right: 0,
+                  width: 20,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   pointerEvents: 'none',
                 }}>
@@ -774,6 +777,22 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
                     whiteSpace: 'nowrap', maxWidth: 200,
                     overflow: 'hidden', textOverflow: 'ellipsis',
                   }}>{axisNames.right}</span>
+                </div>
+              )}
+              {/* X axis label — centered in the bottom margin below the tick labels */}
+              {axisNames?.x && (
+                <div style={{
+                  position: 'absolute', bottom: 2,
+                  left: 52, right: (effectiveRightFields.length > 0 ? 52 : 12),
+                  height: 14,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  pointerEvents: 'none',
+                }}>
+                  <span style={{
+                    fontSize: 10, color: reportTheme?.textColor ?? '#c0c0c0',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden', textOverflow: 'ellipsis',
+                  }}>{axisNames.x}</span>
                 </div>
               )}
             </div>
