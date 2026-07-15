@@ -393,12 +393,12 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
         setGenerating(false)
         return
       }
-      setGenStatus(`Downloading ${pngs.length} PNG${pngs.length > 1 ? 's' : ''} to Downloads folder…`)
-      await downloadFilesIndividually(pngs)
+      setGenStatus(`Building ZIP…`)
+      await downloadAsZip(pngs)
       setGenStatus(
         cancelled
-          ? `Cancelled — ${pngs.length} PNG${pngs.length !== 1 ? 's' : ''} sent to Downloads folder.`
-          : `✓ ${pngs.length} PNG${pngs.length !== 1 ? 's' : ''} saved to your Downloads folder.`
+          ? `Cancelled — ${pngs.length} PNG${pngs.length !== 1 ? 's' : ''} bundled in ZIP.`
+          : `✓ ${pngs.length} PNG${pngs.length !== 1 ? 's' : ''} downloaded as report_charts.zip.`
       )
     }
 
@@ -415,11 +415,8 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
     // User dismissed the picker — do nothing.
     if (cancelled) return
 
-    // Picker unavailable (browser setting) — fall through to individual downloads.
-    // Show an informational note but don't bail; the user still gets their files.
-    if (pickerError) {
-      setError('Folder picker unavailable — files will download individually to your Downloads folder. If Brave asks to allow multiple downloads, click Allow.')
-    }
+    // Picker unavailable — fall through to ZIP download.
+    if (pickerError) setError('')
 
     // Snapshot the instance list so reorders/deletions mid-run don't affect the loop.
     const snap = [...instances]
