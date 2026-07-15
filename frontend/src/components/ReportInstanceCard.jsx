@@ -162,16 +162,10 @@ function buildEChartsOption(chartData, leftFields, rightFields, leftType, rightT
 
   const axisLabelStyle = { formatter: fmtAxisVal, fontSize: 10, color: textColor }
   const axisLineStyle  = { lineStyle: { color: axisColor } }
-  const axisNameStyle  = { fontSize: 10, color: textColor, padding: [0, 0, 0, 0] }
 
-  const leftAxisName = makeAxisName(leftFields, leftYMode)
   const yAxes = [
     {
       type: 'value',
-      name: leftAxisName,
-      nameLocation: 'middle',
-      nameGap: 42,
-      nameTextStyle: axisNameStyle,
       axisLabel: axisLabelStyle,
       axisLine: axisLineStyle,
       axisTick: axisLineStyle,
@@ -180,13 +174,8 @@ function buildEChartsOption(chartData, leftFields, rightFields, leftType, rightT
     },
   ]
   if (rightFields.length > 0) {
-    const rightAxisName = makeAxisName(rightFields, rightYMode)
     yAxes.push({
       type: 'value',
-      name: rightAxisName,
-      nameLocation: 'middle',
-      nameGap: 48,
-      nameTextStyle: axisNameStyle,
       axisLabel: axisLabelStyle,
       axisLine: axisLineStyle,
       axisTick: axisLineStyle,
@@ -196,26 +185,32 @@ function buildEChartsOption(chartData, leftFields, rightFields, leftType, rightT
   }
 
   return {
-    backgroundColor: bgRgba,
-    textStyle: { color: textColor },
-    legend: showLegend
-      ? { show: true, top: 4, textStyle: { fontSize: 10, color: textColor } }
-      : { show: false },
-    grid: { left: 12, right: 12, top: showLegend ? 36 : 12, bottom: 40, containLabel: true },
-    tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
-    xAxis: {
-      type: 'category',
-      data: xLabels,
-      axisLabel: { rotate: xLabels.length > 20 ? 30 : 0, fontSize: 10, color: textColor },
-      axisLine: axisLineStyle,
-      axisTick: axisLineStyle,
-      splitLine: { show: false },
+    axisNames: {
+      left: makeAxisName(leftFields, leftYMode),
+      right: rightFields.length > 0 ? makeAxisName(rightFields, rightYMode) : null,
     },
-    yAxis: yAxes,
-    series: [
-      ...makeSeries(leftFields, 0, leftType, 0, leftYMode),
-      ...makeSeries(rightFields, rightFields.length > 0 ? 1 : 0, rightType, leftFields.length, rightYMode),
-    ],
+    option: {
+      backgroundColor: bgRgba,
+      textStyle: { color: textColor },
+      legend: showLegend
+        ? { show: true, top: 4, textStyle: { fontSize: 10, color: textColor } }
+        : { show: false },
+      grid: { left: 52, right: rightFields.length > 0 ? 52 : 12, top: showLegend ? 36 : 12, bottom: 40, containLabel: false },
+      tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+      xAxis: {
+        type: 'category',
+        data: xLabels,
+        axisLabel: { rotate: xLabels.length > 20 ? 30 : 0, fontSize: 10, color: textColor },
+        axisLine: axisLineStyle,
+        axisTick: axisLineStyle,
+        splitLine: { show: false },
+      },
+      yAxis: yAxes,
+      series: [
+        ...makeSeries(leftFields, 0, leftType, 0, leftYMode),
+        ...makeSeries(rightFields, rightFields.length > 0 ? 1 : 0, rightType, leftFields.length, rightYMode),
+      ],
+    },
   }
 }
 
@@ -366,7 +361,7 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
     return config.xSortDir === 'desc' ? sorted.reverse() : sorted
   }, [chartDataLeft, chartDataRight, config.leftFields, config.xSortDir])
 
-  const echartsOption = useMemo(() =>
+  const { option: echartsOption, axisNames } = useMemo(() =>
     buildEChartsOption(
       mergedChartData,
       config.leftFields ?? [],
@@ -744,11 +739,19 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
 
           {/* Preview chart */}
           {runStatus === 'done' && mergedChartData.length > 0 && (
-            <MiniChart
-              option={echartsOption}
-              height={240}
-              onInstance={inst => { chartInstanceRef.current = inst }}
-            />
+            <div>
+              {(axisNames?.left || axisNames?.right) && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0 4px 3px', fontSize: 9, color: reportTheme?.textColor ?? '#c0c0c0', opacity: 0.8 }}>
+                  <span>{axisNames.left ?? ''}</span>
+                  {axisNames.right && <span>{axisNames.right}</span>}
+                </div>
+              )}
+              <MiniChart
+                option={echartsOption}
+                height={240}
+                onInstance={inst => { chartInstanceRef.current = inst }}
+              />
+            </div>
           )}
 
           {runStatus === 'done' && mergedChartData.length === 0 && (
