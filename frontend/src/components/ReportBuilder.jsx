@@ -40,26 +40,54 @@ function normaliseTheme(partial) {
  *   cancelled  — true if the user dismissed the picker (AbortError)
  *   error      — human-readable string if the API threw for any other reason
  */
+async function debugFileSystemAccess() {
+  const d = {
+    'showDirectoryPicker type' : typeof window.showDirectoryPicker,
+    'isSecureContext'          : window.isSecureContext,
+    'location'                 : window.location.href,
+    'in iframe (window===top)' : window === window.top,
+    'userAgent'                : navigator.userAgent,
+    'navigator.brave exists'   : navigator.brave != null,
+  }
+
+  // Feature Policy / Permissions Policy — tells us if the API is blocked at the
+  // iframe/document level (relevant if the app is embedded or uses an iframe).
+  try {
+    const fp = document.featurePolicy ?? document.permissionsPolicy
+    if (fp) {
+      d['featurePolicy.allowsFeature("file-system")'] = fp.allowsFeature('file-system')
+      d['featurePolicy.allowsFeature("file-system-access")'] = fp.allowsFeature('file-system-access')
+    } else {
+      d['featurePolicy'] = 'not available'
+    }
+  } catch (e) {
+    d['featurePolicy error'] = String(e)
+  }
+
+  // navigator.brave.isBrave() is async — tells us if this is actually Brave
+  try {
+    if (navigator.brave?.isBrave) {
+      d['navigator.brave.isBrave()'] = await navigator.brave.isBrave()
+    }
+  } catch (e) {
+    d['navigator.brave.isBrave() error'] = String(e)
+  }
+
+  console.group('%c[FSA Debug] File System Access diagnostics', 'font-weight:bold;color:#4caf50')
+  console.table(d)
+  console.groupEnd()
+  return d
+}
+
 async function pickDirectory() {
-  // Log the actual availability so it shows up in DevTools → Console for debugging.
-  console.log('[pickDirectory] window.showDirectoryPicker =', typeof window.showDirectoryPicker,
-    '| isSecureContext =', window.isSecureContext,
-    '| location =', window.location.href)
+  const debug = await debugFileSystemAccess()
 
   if (!window.showDirectoryPicker) {
-    // The API is missing.  Two known causes:
-    //   1. Page is not a secure context — must be https:// or http://localhost
-    //      (accessing via an IP address like 192.168.x.x counts as insecure)
-    //   2. Brave's global File System Access setting is set to Blocked —
-    //      check brave://settings/content/filesystem and set it to "Ask"
-    const secureCtx = window.isSecureContext
-    const hint = !secureCtx
-      ? 'This page is not a secure context (check that you\'re using http://localhost, not an IP address).'
-      : 'Check brave://settings/content/filesystem — make sure it is set to "Ask", not "Blocked".'
+    const lines = Object.entries(debug).map(([k, v]) => `  ${k}: ${v}`).join('\n')
     return {
       dirHandle: null,
       cancelled: false,
-      error: `File System Access API unavailable (window.showDirectoryPicker is missing). ${hint}`,
+      error: `File System Access API unavailable (showDirectoryPicker is missing).\n\nDiagnostics:\n${lines}\n\nPaste the "[FSA Debug]" table from DevTools → Console here for further help.`,
     }
   }
   try {
@@ -67,12 +95,14 @@ async function pickDirectory() {
     return { dirHandle, cancelled: false, error: null }
   } catch (e) {
     if (e?.name === 'AbortError') {
-      // User explicitly cancelled the picker — not an error
       return { dirHandle: null, cancelled: true, error: null }
     }
-    // API threw for some other reason (SecurityError, NotAllowedError, etc.)
     console.error('[pickDirectory] showDirectoryPicker threw:', e.name, e.message, e)
-    return { dirHandle: null, cancelled: false, error: `Folder picker failed (${e.name}: ${e.message}). Check brave://settings/content/filesystem.` }
+    return {
+      dirHandle: null,
+      cancelled: false,
+      error: `Folder picker threw ${e.name}: ${e.message}\n\nPaste the "[FSA Debug]" table from DevTools → Console here for further help.`,
+    }
   }
 }
 
