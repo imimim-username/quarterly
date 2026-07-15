@@ -85,58 +85,74 @@ function buildEChartsOption(chartData, leftFields, rightFields, leftType, rightT
     return yMode === 'cumulative' ? `${name} (cumulative)` : name
   }
 
-  const axisLabelStyle = { formatter: fmtAxisVal, fontSize: 10, color: textColor, fontFamily: fontFamily }
+  const axisLabelStyle = { formatter: fmtAxisVal, fontSize: 10, color: textColor, fontFamily }
+  const axisNameStyle  = { fontSize: 10, color: textColor, fontFamily }
   const axisLineStyle  = { lineStyle: { color: axisColor } }
+  const hasRight       = rightFields.length > 0
 
-  const yAxes = [
-    {
-      type: 'value',
-      axisLabel: axisLabelStyle,
-      axisLine: axisLineStyle,
-      axisTick: axisLineStyle,
-      splitLine: { lineStyle: { color: gridColor } },
-      scale: leftScaleY,
+  const leftName  = makeAxisName(leftFields, leftYMode)
+  const rightName = hasRight ? makeAxisName(rightFields, rightYMode) : undefined
+  const xName     = xField ? (fieldMeta[xField]?.label || xField) : undefined
+
+  return {
+    backgroundColor: bgRgba,
+    textStyle: { color: textColor, fontFamily },
+    legend: showLegend
+      ? { show: true, top: 4, textStyle: { fontSize: 10, color: textColor, fontFamily } }
+      : { show: false },
+    grid: {
+      left:   leftName  ? 70 : 52,
+      right:  rightName ? 70 : 12,
+      top:    showLegend ? 36 : 12,
+      bottom: xName ? 56 : 40,
+      containLabel: false,
     },
-  ]
-  if (rightFields.length > 0) {
-    yAxes.push({
-      type: 'value',
-      axisLabel: axisLabelStyle,
+    tooltip: { trigger: 'axis', axisPointer: { type: 'cross' }, extraCssText: `font-family: ${fontFamily};` },
+    xAxis: {
+      type: 'category',
+      data: xLabels,
+      name: xName,
+      nameLocation: 'middle',
+      nameGap: xLabels.length > 20 ? 46 : 32,
+      nameTextStyle: axisNameStyle,
+      axisLabel: { rotate: xLabels.length > 20 ? 30 : 0, fontSize: 10, color: textColor, fontFamily },
       axisLine: axisLineStyle,
       axisTick: axisLineStyle,
       splitLine: { show: false },
-      scale: rightScaleY,
-    })
-  }
-
-  return {
-    axisNames: {
-      left: makeAxisName(leftFields, leftYMode),
-      right: rightFields.length > 0 ? makeAxisName(rightFields, rightYMode) : null,
-      x: xField ? (fieldMeta[xField]?.label || xField) : null,
     },
-    option: {
-      backgroundColor: bgRgba,
-      textStyle: { color: textColor, fontFamily: fontFamily },
-      legend: showLegend
-        ? { show: true, top: 4, textStyle: { fontSize: 10, color: textColor, fontFamily: fontFamily } }
-        : { show: false },
-      grid: { left: 52, right: rightFields.length > 0 ? 52 : 12, top: showLegend ? 36 : 12, bottom: 40, containLabel: false },
-      tooltip: { trigger: 'axis', axisPointer: { type: 'cross' }, extraCssText: `font-family: ${fontFamily};` },
-      xAxis: {
-        type: 'category',
-        data: xLabels,
-        axisLabel: { rotate: xLabels.length > 20 ? 30 : 0, fontSize: 10, color: textColor, fontFamily: fontFamily },
+    yAxis: [
+      {
+        type: 'value',
+        name: leftName,
+        nameLocation: 'middle',
+        nameGap: 52,
+        nameRotate: 90,
+        nameTextStyle: axisNameStyle,
+        axisLabel: axisLabelStyle,
+        axisLine: axisLineStyle,
+        axisTick: axisLineStyle,
+        splitLine: { lineStyle: { color: gridColor } },
+        scale: leftScaleY,
+      },
+      {
+        type: 'value',
+        show: hasRight,
+        name: rightName,
+        nameLocation: 'middle',
+        nameGap: 52,
+        nameRotate: -90,
+        nameTextStyle: axisNameStyle,
+        axisLabel: axisLabelStyle,
         axisLine: axisLineStyle,
         axisTick: axisLineStyle,
         splitLine: { show: false },
+        scale: rightScaleY,
       },
-      yAxis: yAxes,
-      series: [
-        ...makeSeries(leftFields, 0, leftType, 0, leftYMode),
-        ...makeSeries(rightFields, rightFields.length > 0 ? 1 : 0, rightType, leftFields.length, rightYMode),
-      ],
-    },
+    ],
+    series: [
+      ...makeSeries(leftFields, 0, leftType, 0, leftYMode),
+      ...makeSeries(rightFields, hasRight ? 1 : 0, rightType, leftFields.length, rightYMode),
+    ],
   }
 }
 
@@ -287,7 +303,7 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
     return config.xSortDir === 'desc' ? sorted.reverse() : sorted
   }, [chartDataLeft, chartDataRight, config.leftFields, config.xSortDir])
 
-  const { option: echartsOption, axisNames } = useMemo(() =>
+  const echartsOption = useMemo(() =>
     buildEChartsOption(
       mergedChartData,
       config.leftFields ?? [],
@@ -671,55 +687,6 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
                 height={240}
                 onInstance={inst => { chartInstanceRef.current = inst }}
               />
-              {/* Left Y axis label — sits in the outermost 20 px of the 52 px left margin,
-                  leaving the inner ~32 px free for tick number text */}
-              {axisNames?.left && (
-                <div style={{
-                  position: 'absolute', top: 0, bottom: 0, left: 0,
-                  width: 20,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  pointerEvents: 'none',
-                }}>
-                  <span style={{
-                    fontSize: 10, color: reportTheme?.textColor ?? '#c0c0c0',
-                    transform: 'rotate(-90deg)',
-                    whiteSpace: 'nowrap', maxWidth: 200,
-                    overflow: 'hidden', textOverflow: 'ellipsis',
-                  }}>{axisNames.left}</span>
-                </div>
-              )}
-              {/* Right Y axis label — sits in the outermost 20 px of the right margin */}
-              {axisNames?.right && (
-                <div style={{
-                  position: 'absolute', top: 0, bottom: 0, right: 0,
-                  width: 20,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  pointerEvents: 'none',
-                }}>
-                  <span style={{
-                    fontSize: 10, color: reportTheme?.textColor ?? '#c0c0c0',
-                    transform: 'rotate(90deg)',
-                    whiteSpace: 'nowrap', maxWidth: 200,
-                    overflow: 'hidden', textOverflow: 'ellipsis',
-                  }}>{axisNames.right}</span>
-                </div>
-              )}
-              {/* X axis label — centered in the bottom margin below the tick labels */}
-              {axisNames?.x && (
-                <div style={{
-                  position: 'absolute', bottom: 2,
-                  left: 52, right: (effectiveRightFields.length > 0 ? 52 : 12),
-                  height: 14,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  pointerEvents: 'none',
-                }}>
-                  <span style={{
-                    fontSize: 10, color: reportTheme?.textColor ?? '#c0c0c0',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden', textOverflow: 'ellipsis',
-                  }}>{axisNames.x}</span>
-                </div>
-              )}
             </div>
           )}
 
