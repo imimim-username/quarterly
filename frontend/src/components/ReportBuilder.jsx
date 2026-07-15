@@ -254,43 +254,34 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
 
   // ── Generate PNGs ──
 
-  const handleGenerate = async () => {
-    if (instances.length === 0) return
-    cancelRef.current = false
-    setGenerating(true)
-    setGenStatus('Preparing…')
-    setError('')
-
-    // Pick destination folder up-front so we can write each PNG immediately.
-    // Fallback: accumulate in memory and ZIP at the end.
-    const dirHandle = await pickDirectory()
-
-    const pngs = []   // used only in ZIP fallback mode
+  // Runs in the background after the directory is picked.
+  // Called with void so handleGenerate returns immediately and the UI stays live.
+  const runGenerateLoop = useCallback(async (dirHandle, snap) => {
+    const pngs = []   // ZIP fallback only
     let saved = 0
     let cancelled = false
 
-    for (let i = 0; i < instances.length; i++) {
+    for (let i = 0; i < snap.length; i++) {
       if (cancelRef.current) { cancelled = true; break }
 
-      const inst = instances[i]
+      const inst = snap[i]
       const cardRef = cardRefs.current[inst._tempId]
       if (!cardRef) continue
 
       const label = inst.label || inst.query?.name || '…'
-      setGenStatus(`${i + 1} / ${instances.length}: ${label}`)
+      setGenStatus(`${i + 1} / ${snap.length}: ${label}`)
 
       try {
         const { dataUrl, filename } = await cardRef.generate()
         if (!dataUrl) continue
 
         if (dirHandle) {
-          // Write immediately — progress is preserved even if cancelled later
           await writePngToDir(dirHandle, filename, dataUrl)
           saved++
-          setGenStatus(`${i + 1} / ${instances.length}: ${label} ✓  (${saved} saved)`)
+          setGenStatus(`${i + 1} / ${snap.length}: ${label} ✓  (${saved} saved)`)
         } else {
           pngs.push({ dataUrl, filename })
-          setGenStatus(`${i + 1} / ${instances.length}: ${label} ✓`)
+          setGenStatus(`${i + 1} / ${snap.length}: ${label} ✓`)
         }
       } catch (e) {
         console.error('Generate failed for instance', inst, e)
@@ -319,6 +310,25 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
     }
 
     setGenerating(false)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleGenerate = async () => {
+    if (instances.length === 0 || generating) return
+
+    // showDirectoryPicker must be called in a user-gesture handler — do it here
+    // before yielding to React state updates.
+    const dirHandle = await pickDirectory()
+
+    // Snapshot the instance list so reorders/deletions mid-run don't affect the loop.
+    const snap = [...instances]
+
+    cancelRef.current = false
+    setGenerating(true)
+    setGenStatus('Starting…')
+    setError('')
+
+    // Fire and forget — the UI stays fully interactive while files save in the background.
+    void runGenerateLoop(dirHandle, snap)
   }
 
   const handleCancelGenerate = () => {
@@ -355,21 +365,24 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
         >
           + Add Chart Instance
         </button>
-        {instances.length > 0 && !generating && (
-          <button
-            onClick={handleGenerate}
-            style={{ background:'#2a6e2a', border:'1px solid #4caf50', color:'#fff', marginLeft:'auto' }}
-          >
-            ⬇ Generate PNGs
-          </button>
-        )}
-        {generating && (
-          <button
-            onClick={handleCancelGenerate}
-            style={{ background:'#6e2a2a', border:'1px solid #f44336', color:'#fff', marginLeft:'auto' }}
-          >
-            ✕ Cancel
-          </button>
+        {instances.length > 0 && (
+          <div style={{ display:'flex', gap:6, alignItems:'center', marginLeft:'auto' }}>
+            <button
+              onClick={handleGenerate}
+              disabled={generating}
+              style={{ background: generating ? '#1e4a1e' : '#2a6e2a', border:'1px solid #4caf50', color: generating ? '#6a9a6a' : '#fff', cursor: generating ? 'default' : 'pointer' }}
+            >
+              {generating ? '⟳ Saving…' : '⬇ Generate PNGs'}
+            </button>
+            {generating && (
+              <button
+                onClick={handleCancelGenerate}
+                style={{ background:'transparent', border:'1px solid var(--color-error)', color:'var(--color-error)', fontSize:11, padding:'3px 8px' }}
+              >
+                ✕ Cancel
+              </button>
+            )}
+          </div>
         )}
         {!isNew && (
           <button
