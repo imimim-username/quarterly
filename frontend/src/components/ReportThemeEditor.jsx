@@ -65,6 +65,55 @@ function ColorRow({ label, value, onChange }) {
 
 // ─── PaletteEditor — series color swatches ────────────────────────────────────
 
+function PaletteSwatch({ color, onColorChange, onRemove, canRemove }) {
+  const [text, setText] = useState(color)
+
+  const handlePicker = (e) => {
+    setText(e.target.value)
+    onColorChange(e.target.value)
+  }
+  const handleText = (e) => {
+    setText(e.target.value)
+    const v = e.target.value.trim()
+    if (/^#[0-9a-fA-F]{6}$/.test(v) || /^#[0-9a-fA-F]{3}$/.test(v)) {
+      onColorChange(normaliseHex(v))
+    }
+  }
+  const handleBlur = () => setText(normaliseHex(color))
+
+  React.useEffect(() => { setText(color) }, [color])
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+      <input
+        type="color"
+        value={normaliseHex(color)}
+        onChange={handlePicker}
+        title={color}
+        style={{ width: 28, height: 22, border: '1px solid var(--color-border)', borderRadius: 3, cursor: 'pointer', padding: 0 }}
+      />
+      <input
+        type="text"
+        value={text}
+        onChange={handleText}
+        onBlur={handleBlur}
+        maxLength={7}
+        style={{ width: 52, fontSize: 10, fontFamily: 'monospace', padding: '1px 4px', textAlign: 'center' }}
+      />
+      <button
+        onClick={onRemove}
+        disabled={!canRemove}
+        style={{
+          fontSize: 9, padding: '0 3px', background: 'transparent',
+          color: 'var(--color-error)', border: 'none', cursor: 'pointer',
+          opacity: canRemove ? 1 : 0.3,
+        }}
+        title="Remove color"
+      >×</button>
+    </div>
+  )
+}
+
 function PaletteEditor({ colors, onChange }) {
   const addColor = () => onChange([...colors, '#888888'])
   const removeColor = (i) => onChange(colors.filter((_, idx) => idx !== i))
@@ -75,31 +124,19 @@ function PaletteEditor({ colors, onChange }) {
       <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 5 }}>
         Series Colors
       </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'flex-start' }}>
         {colors.map((color, i) => (
-          <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-            <input
-              type="color"
-              value={normaliseHex(color)}
-              onChange={e => updateColor(i, e.target.value)}
-              title={color}
-              style={{ width: 28, height: 22, border: '1px solid var(--color-border)', borderRadius: 3, cursor: 'pointer', padding: 0 }}
-            />
-            <button
-              onClick={() => removeColor(i)}
-              disabled={colors.length <= 1}
-              style={{
-                fontSize: 9, padding: '0 3px', background: 'transparent',
-                color: 'var(--color-error)', border: 'none', cursor: 'pointer',
-                opacity: colors.length <= 1 ? 0.3 : 1,
-              }}
-              title="Remove color"
-            >×</button>
-          </div>
+          <PaletteSwatch
+            key={i}
+            color={color}
+            onColorChange={val => updateColor(i, val)}
+            onRemove={() => removeColor(i)}
+            canRemove={colors.length > 1}
+          />
         ))}
         <button
           onClick={addColor}
-          style={{ fontSize: 18, lineHeight: 1, padding: '0 4px', background: 'transparent', border: '1px dashed var(--color-border)', borderRadius: 3, color: 'var(--color-text-muted)', cursor: 'pointer' }}
+          style={{ fontSize: 18, lineHeight: 1, padding: '0 4px', background: 'transparent', border: '1px dashed var(--color-border)', borderRadius: 3, color: 'var(--color-text-muted)', cursor: 'pointer', alignSelf: 'center' }}
           title="Add color"
         >+</button>
       </div>
