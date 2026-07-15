@@ -275,13 +275,16 @@ module.exports = function runsRoutes(db) {
     const { query_id, limit = 20, offset = 0 } = req.query;
 
     try {
+      const limitN  = Math.max(0, parseInt(limit,  10) || 20);
+      const offsetN = Math.max(0, parseInt(offset, 10) || 0);
+
       let query, params;
       if (query_id) {
         query = 'SELECT * FROM runs WHERE query_id = ? ORDER BY ran_at DESC LIMIT ? OFFSET ?';
-        params = [query_id, parseInt(limit, 10), parseInt(offset, 10)];
+        params = [query_id, limitN, offsetN];
       } else {
         query = 'SELECT * FROM runs ORDER BY ran_at DESC LIMIT ? OFFSET ?';
-        params = [parseInt(limit, 10), parseInt(offset, 10)];
+        params = [limitN, offsetN];
       }
 
       const rows = db.prepare(query).all(...params);

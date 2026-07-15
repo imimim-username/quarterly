@@ -660,6 +660,93 @@ if (nativeAvailable) {
     });
   });
 
+  // ── POST /api/reports with config ─────────────────────────────────────────
+
+  describe('POST /api/reports — config field', () => {
+    test('creates a report with a config object', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const config = { theme: { bg: '#1a1f2e', textColor: '#c0c0c0' } };
+      const res = await request(app).post('/api/reports').send({ name: 'Themed', config });
+      expect(res.status).toBe(201);
+      expect(res.body.config).toEqual(config);
+      db.close();
+    });
+
+    test('config defaults to null when omitted', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const res = await request(app).post('/api/reports').send({ name: 'No Config' });
+      expect(res.status).toBe(201);
+      expect(res.body.config).toBeNull();
+      db.close();
+    });
+
+    test('config is returned as parsed object (not raw JSON string)', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const config = { palette: ['#ff0000', '#00ff00'] };
+      const res = await request(app).post('/api/reports').send({ name: 'Palette Report', config });
+      expect(res.status).toBe(201);
+      expect(typeof res.body.config).toBe('object');
+      expect(res.body.config.palette).toEqual(['#ff0000', '#00ff00']);
+      db.close();
+    });
+  });
+
+  // ── PUT /api/reports/:id — config field ───────────────────────────────────
+
+  describe('PUT /api/reports/:id — config field', () => {
+    test('updates config on existing report', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const id = createReport(db);
+      const config = { theme: { bg: '#000000' } };
+      const res = await request(app).put(`/api/reports/${id}`).send({ config });
+      expect(res.status).toBe(200);
+      expect(res.body.config).toEqual(config);
+      db.close();
+    });
+
+    test('PUT without config field preserves existing config', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const config = { theme: { bg: '#123456' } };
+      // Create with config
+      const create = await request(app).post('/api/reports').send({ name: 'Has Config', config });
+      const id = create.body.id;
+      // Update only name — config should be untouched
+      const res = await request(app).put(`/api/reports/${id}`).send({ name: 'Renamed' });
+      expect(res.status).toBe(200);
+      expect(res.body.config).toEqual(config);
+      db.close();
+    });
+
+    test('PUT with config: null clears the config', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const config = { theme: { bg: '#123456' } };
+      const create = await request(app).post('/api/reports').send({ name: 'Has Config', config });
+      const id = create.body.id;
+      const res = await request(app).put(`/api/reports/${id}`).send({ config: null });
+      expect(res.status).toBe(200);
+      expect(res.body.config).toBeNull();
+      db.close();
+    });
+
+    test('GET /:id includes config on report with instances', async () => {
+      const db = makeDb();
+      const app = makeApp(db);
+      const config = { theme: { textColor: '#ffffff' } };
+      const create = await request(app).post('/api/reports').send({ name: 'With Config', config });
+      const id = create.body.id;
+      const res = await request(app).get(`/api/reports/${id}`);
+      expect(res.status).toBe(200);
+      expect(res.body.config).toEqual(config);
+      db.close();
+    });
+  });
+
 } else {
   describe('reports.test.js — DB integration', () => {
     test.skip('all tests skipped: better-sqlite3 native module unavailable', () => {});
