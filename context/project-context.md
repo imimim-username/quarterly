@@ -110,11 +110,13 @@ quarterly/                          npm workspace root
 │       │   ├── timestampExtraction.js  applyTimestampExtraction / timestampExtractionMeta
 │       │   ├── mergeDatasets.js    mergeDatasets / formatXLabel — union-join for MultiQueryChart
 │       │   ├── chartDataUtils.js   buildChartData / makeAxisName / bucketTimestamp — chart helpers for ReportInstanceCard
+│       │   ├── zipBuilder.js       pure-JS STORE-mode ZIP builder; exports crc32(data) and buildZipBytes(files)
 │       │   └── __tests__/
 │       │       ├── computedColumns.test.js   (115 tests)
 │       │       ├── timestampExtraction.test.js  (25 tests)
 │       │       ├── mergeDatasets.test.js     (38 tests)
-│       │       └── chartDataUtils.test.js    (56 tests)
+│       │       ├── chartDataUtils.test.js    (56 tests)
+│       │       └── zipBuilder.test.js        (17 tests — CRC-32 vectors + ZIP structural correctness)
 │       └── components/             27 components (see §10)
 │           ├── __tests__/          15 Vitest test files
 │           └── ...
@@ -1426,17 +1428,36 @@ Matches rows by `keyField`. For each numeric column, shows `valueA`, `valueB`, `
 - `name`, `description` — report metadata
 - `instances` — array of instance state objects (see `ReportInstanceCard` section for config shape)
 - `reportTheme` — current theme object (from `normaliseTheme(report?.config?.theme)`)
-- `generating` — bool, true while PNG generation is running
+- `generating` — bool, true while PNG generation loop is running
+- `genStatus` — string progress message shown during generation (e.g. "3 / 12: chart name ✓")
 - `themeEditorOpen` — bool, toggle for `ReportThemeEditor` panel
 
 **Behaviour:**
 - Uses `cardRefs` (`useRef({})`) to store `useImperativeHandle` refs keyed by `instance._tempId`. Each ref exposes a `generate()` method.
 - Floating **Save** FAB (bottom-right) calls `handleSave`, which calls `createReport`/`updateReport` then `bulkSaveReportInstances`. Passed `config: { theme: reportTheme }` in both create and update.
-- **Generate PNGs** button calls `handleGenerate`: iterates `cardRefs`, calls `ref.generate()` on each in sequence, collects `{ dataUrl, filename }` results, triggers individual `<a>.click()` downloads with 300 ms delay between them (no ZIP).
+- **Generate PNGs** button calls `handleGenerate`:
+  1. Calls `pickDirectory()` — attempts `window.showDirectoryPicker({ mode: 'readwrite' })`. Returns `{ dirHandle, cancelled, error }`. If cancelled (user dismissed dialog), aborts. If API unavailable/blocked, `dirHandle` is null and `error` is set (silently falls through to ZIP).
+  2. Fires `void runGenerateLoop(dirHandle, snap)` — **fire-and-forget** so the UI stays fully interactive during generation.
+  3. `runGenerateLoop` iterates the snapshot, calls `await cardRef.generate()` for each, updates `genStatus` per card. If `dirHandle` is set, writes each PNG directly to disk via `writePngToDir`. If not, collects PNGs and calls `downloadAsZip` at the end.
+  4. A **Cancel** button sets `cancelRef.current = true` which breaks the loop after the current card finishes.
+- `cancelRef` — `useRef(false)`, checked each iteration of `runGenerateLoop`. Set by the Cancel button.
+- Each card receives an `onClone` prop — ⧉ Clone button on the Run Preview row (flush right via `marginLeft: 'auto'`). `cloneInstance(tempId)` inserts a copy immediately after the original with label `"${label} (copy)"`.
 - `handleSave` does NOT trigger a reload/remount — it calls `onSave(saved)` which only updates the report reference in `ReportsPanel` (no `setLoading`).
 - `ReportThemeEditor` is rendered as a collapsible panel above the instances list.
 - Each `ReportInstanceCard` receives `reportTheme`, `startDate`, `endDate`, `addressLabels`.
 - Color scheme selector: selects from `colorSchemes` prop; applying a scheme sets `reportTheme.palette` to the scheme's colors (merged via `normaliseTheme`).
+
+**`pickDirectory()` (module-level):**
+```js
+// Returns { dirHandle, cancelled, error }
+// dirHandle = null + cancelled = false + error = null → browser doesn't support API → ZIP fallback
+// dirHandle = null + cancelled = true → user dismissed picker → do nothing
+// dirHandle = null + error = string → API threw unexpectedly → ZIP fallback
+```
+
+**`writePngToDir(dirHandle, filename, dataUrl)`** — creates/overwrites a file in `dirHandle` using `FileSystemWritableFileStream`.
+
+**`downloadAsZip(pngs)`** — fallback when `dirHandle` is null. Uses `buildZipBytes` from `utils/zipBuilder.js` to assemble a STORE-mode ZIP in memory, then triggers one `<a download="report_charts.zip">` click.
 
 **`defaultReportTheme()` (module-level helper):**
 ```js
@@ -1503,10 +1524,18 @@ All changes call `onChange` immediately (live preview in charts).
 
 **`useImperativeHandle` — `generate()` method:**
 1. Calls `setExpanded(true)` — ensures `MiniChart` is mounted (it only renders when expanded)
-2. If `runStatus !== 'done'`, awaits `runPreview()`
-3. Polls `chartInstanceRef.current` every 100 ms (up to 50 × = 5 s) until the ECharts instance is ready
-4. Calls `chartInstanceRef.current.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: hexToRgba(reportTheme.bg, reportTheme.bgAlpha) })`
-5. Returns `{ dataUrl, filename }` — `filename` from `buildFilename(query, label, config, startDate, endDate)`
+2. If `runStatus === 'running'`, waits for it to finish (polls `chartInstanceRef.current` up to 60 s) instead of firing a concurrent fetch. If `runStatus !== 'done'` and not running, awaits `runPreview()`.
+3. Waits one tick (50 ms) for React to mount `MiniChart`. If `chartInstanceRef.current` is still null after the grace tick, bails immediately (returns `{ dataUrl: null, filename: null }`).
+4. Polls `chartInstanceRef.current` every 100 ms (up to 50 × = 5 s) until the ECharts instance is ready.
+5. Calls `chartInstanceRef.current.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: hexToRgba(reportTheme.bg, reportTheme.bgAlpha) })`
+6. Returns `{ dataUrl, filename }` — `filename` from `buildFilename(query, label, config, startDate, endDate)`
+
+**`buildFilename` — filename truncation:**
+- Assembles stem from query name + label + field names + date range
+- `MAX_STEM = 200` characters; if stem exceeds limit, truncates and appends a 6-char FNV-1a hex hash (`shortHash`) to prevent collisions
+- Returns `${stem}.png`
+
+**`onClone` prop:** triggers `cloneInstance(tempId)` in `ReportBuilder`. The ⧉ Clone button sits on the Run Preview row, flush right (`marginLeft: 'auto'`).
 
 **`hexToRgba(hex, alpha)` (module-level):**
 ```js
@@ -1778,12 +1807,35 @@ Each descriptor:
 2. **Union all keys** — `new Set(...)` across all datasets' Maps.
 3. **Sort keys** — numeric sort (timestamps), string sort otherwise.
 4. **Aggregate per bucket** — `aggregate(values, method)` applies sum/avg/median/min/max/count; returns `null` for empty arrays.
-5. **Cumulative mode** — iterates keys in order, running a sum per field, mutates `aggMap` in place.
-6. **Merge rows** — for each `xKey`, one row object `{ x, d0_field, d1_field, ... }`. Missing buckets for a dataset → `null` (null-fill). Series key prefix `d{idx}_` prevents column name collisions across datasets.
+5. **Cumulative mode** — iterates keys in order, running a sum per field. Critically, the running total is carried forward into X-keys that are absent from a given dataset (rather than leaving null gaps), so cumulative series remain continuous across the union of keys.
+6. **Merge rows** — for each `xKey`, one row object `{ x, d0_field, d1_field, ... }`. Missing buckets for a dataset → `null` (null-fill for non-cumulative; carried-forward running total for cumulative). Series key prefix `d{idx}_` prevents column name collisions across datasets.
 
 **`formatXLabel(key, groupBy)`** — formats a unix-seconds bucket key as a human-readable date string. Keys > 946684800 (year 2000) are formatted as dates; others are stringified as-is.
 
 **Type-compatible X alignment:** both datasets are bucketed with the same `groupBy` before joining. Timestamps in dataset A and B don't have to match exactly — they just need to be unix timestamps so `bucketTimestamp` maps them to the same bucket.
+
+---
+
+### `zipBuilder.js` — pure-JS ZIP builder (STORE mode)
+
+File: `frontend/src/utils/zipBuilder.js`
+
+Builds a ZIP archive entirely in JavaScript with no dependencies. Used as the PNG export fallback when `showDirectoryPicker` is unavailable (browser does not support the File System Access API or it is blocked by browser settings).
+
+**API:**
+```js
+crc32(data: Uint8Array): number
+buildZipBytes(files: Array<{ name: string, data: Uint8Array }>): Uint8Array
+```
+
+**Implementation details:**
+- Uses a 256-entry CRC-32 lookup table (standard polynomial `0xEDB88320`) computed once at module load
+- Entries use STORE method (compression method = 0, no compression) — chosen for simplicity and to avoid requiring a deflate library
+- Each entry has a Local File Header, file data, Central Directory Header, and End of Central Directory record — all written via `DataView` into a pre-allocated `ArrayBuffer`
+- Filenames are encoded as UTF-8 and the UTF-8 flag (bit 11) is set in the general purpose bit flag
+- No ZIP64 extensions — suitable for reports up to 4 GB total / 65535 files
+
+**Why not a library:** avoids adding jszip/fflate/etc. as a dependency (supply chain risk, bundle size). The STORE-mode implementation is ~60 lines and fully covered by 17 Vitest tests.
 
 ---
 
@@ -1806,7 +1858,7 @@ Extracted from `ReportInstanceCard` so the functions can be unit-tested without 
 4. Applies cumulative mode (running sum per field) if `yMode === 'cumulative'`
 5. Returns `[{ x, [field]: value, ... }, ...]`
 
-**`fmtAxisVal(val)`** — compact Y-axis label formatter: `1234567` → `"1.23M"`. Supports K/M/B/T suffixes.
+**`fmtAxisVal(val)`** — compact Y-axis label formatter: `1234567` → `"1.23M"`. Supports K/M/B/T suffixes. Guards against non-finite / NaN inputs (returns `""` instead of `"InfinityT"`).
 
 **`fmtXLabel(val, groupBy, xField)`** — formats an X-axis label. When `groupBy !== 'none'`, treats `val` as a Unix-second timestamp and formats with `toLocaleDateString`. Otherwise, heuristically detects Unix timestamps (1e9 < val < 2e10) and formats as dates; falls back to `String(val)`.
 
@@ -1823,12 +1875,20 @@ The Reports tab uses an **instance-based architecture** where each chart in a re
 
 The critical design constraint: `ReportBuilder` must NOT be unmounted between save and PNG generation, because all `cardRefs` are cleared on unmount. `ReportsPanel.handleSave` therefore avoids any state changes that would cause a loading→remount cycle.
 
-**Generate PNGs flow (`ReportBuilder.handleGenerate`):**
-1. Iterates `cardRefs.current` entries
-2. For each ref, calls `await ref.generate()` — see `ReportInstanceCard` section
-3. Collects `{ dataUrl, filename }` objects (skips null `dataUrl`)
-4. For each result, creates `<a href=dataUrl download=filename>` and calls `.click()` with 300 ms between
-5. Shows "No charts could be generated" if all refs returned null
+**Generate PNGs flow (`ReportBuilder.handleGenerate` + `runGenerateLoop`):**
+1. `handleGenerate` calls `pickDirectory()` — tries `window.showDirectoryPicker`. Returns `{ dirHandle, cancelled, error }`.
+2. If user cancelled the picker, returns immediately (no generation).
+3. Snapshots `instances` array, sets `generating = true`, fires `void runGenerateLoop(dirHandle, snap)` and returns. The UI remains fully interactive.
+4. `runGenerateLoop` iterates the snapshot. For each card:
+   - Updates `genStatus` with progress (e.g. `"3 / 12: My Chart"`)
+   - Calls `await cardRef.generate()` — expands the card, runs preview if needed, returns `{ dataUrl, filename }`
+   - If `dirHandle` is set: calls `writePngToDir(dirHandle, filename, dataUrl)` → writes file directly to the user-chosen folder
+   - If `dirHandle` is null: pushes to `pngs[]` array for ZIP
+   - Checks `cancelRef.current` before each card; breaks loop if true
+5. After the loop: if folder mode, shows saved count. If ZIP mode, calls `downloadAsZip(pngs)` → one ZIP dialog.
+6. Sets `generating = false`.
+
+**Cancel button:** sets `cancelRef.current = true`. Loop checks this at the start of each iteration and breaks. Status shows how many were already saved/collected.
 
 **Why cards start collapsed:** saved instances (`instance.id` exists) initialize `expanded = false`. A collapsed card has `MiniChart` unmounted → `chartInstanceRef.current = null` → `getDataURL` cannot be called. The `generate()` method calls `setExpanded(true)` first, then polls until `chartInstanceRef.current` is non-null (up to 5 s).
 
@@ -2033,7 +2093,7 @@ Run: `npm test --workspace=frontend`
 
 Config: `vitest.config.js` with `environment: 'jsdom'`, `setupFiles: ['@testing-library/jest-dom/vitest']`.
 
-**15 test files, 314 tests total (as of 2026-07-15):**
+**16 test files, 331 tests total (as of 2026-07-16):**
 
 | File | Tests | Coverage |
 |---|---|---|
@@ -2052,8 +2112,9 @@ Config: `vitest.config.js` with `environment: 'jsdom'`, `setupFiles: ['@testing-
 | `components/__tests__/SchemaExplorer.test.jsx` | ~4 | GraphiQL embed, "Use This Query" button |
 | `components/__tests__/EndpointProfilesModal.test.jsx` | ~4 | Profile list, create, select, delete |
 | `utils/__tests__/chartDataUtils.test.js` | 56 | `buildChartData` edge cases: bucket collapsing, cumulative across grouped data, divisors, aggregation modes, empty series |
+| `utils/__tests__/zipBuilder.test.js` | 17 | `crc32` standard vectors (empty, single byte, hello world, 0xFF run), `buildZipBytes` structural correctness (signatures, local/central headers, EOCD, entry counts, offsets, UTF-8 filenames, multi-file) |
 
-**Grand total: 561 tests (314 frontend Vitest + 240 backend Jest passing + 7 skipped)**
+**Grand total: 578 tests (331 frontend Vitest + 240 backend Jest passing + 7 skipped)**
 
 Backend test counts: 11 test files, 247 total (240 passing + 7 skipped integration tests gated by `process.env.INTEGRATION`). The 7 skipped tests in `runs.test.js` / `ponder.test.js` require a live Ponder endpoint.
 
@@ -2134,7 +2195,7 @@ CSS class patterns used:
 
 ## 16. Dependency Security Notes
 
-Last audited: **2026-07-15**.
+Last audited: **2026-07-16**.
 
 `npm audit` reports **0 vulnerabilities** across all workspaces. The following were investigated via NVD and GitHub advisories in addition to the npm advisory database:
 
@@ -2148,7 +2209,7 @@ Last audited: **2026-07-15**.
 | — | node-fetch | supply chain + SSRF risk | — | ✅ Removed entirely; native Node 22 `fetch` used instead |
 | — | better-sqlite3 | — | 12.11.2 | ✅ Pinned to 12.11.2 |
 | — | csv-stringify | — | 6.8.1 | ✅ Pinned to 6.8.1 |
-| — | jszip | — | — | ✅ Removed from package.json — not used (PNG download uses individual `<a>.click()`) |
+| — | jszip / fflate | — | — | ✅ Never added — ZIP built with custom `zipBuilder.js` (STORE mode, no dependencies) |
 | — | js-yaml | moderate (jest transitive) | — | ⚠ Unfixable without breaking jest@29; accepted risk (dev-only) |
 
 **SSH deploy key:** `/workspace/extra/github-keys/github_deploy` (ed25519, comment: `nanoclaw-bot`). Push command: `eval "$(ssh-agent -s)" && ssh-add /workspace/extra/github-keys/github_deploy && git push origin main`
