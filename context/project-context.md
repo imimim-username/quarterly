@@ -479,9 +479,19 @@ Used by the migration runner. Tracks the highest applied migration number.
 - Creates Express app with `express.json({ limit: '50mb' })`
 - Registers all 10 route modules on `/api/*`
 - Binds to `127.0.0.1:PORT` (PORT default 8790, overridable via env)
-- Global error handler → `{ error: 'server_error', message }`
+- Global error handler logs full error server-side → `{ error: 'server_error' }` (no internal message exposed to client)
 - Health check: `GET /api/health` → `{ ok: true, version: '1.0.0' }`
 - Exports `{ app, server }` for test usage
+
+### `utils/errors.js`
+
+Shared error-response helper imported by every route module.
+
+```js
+serverError(res, err, code = 'server_error')
+```
+
+Logs the full error object with `console.error('[code]', err)` server-side, then sends `res.status(500).json({ error: code })` to the client. No `message` field is ever included in 500 responses — internal details (DB schema, file paths, stack traces) stay server-side only. The two exceptions (both intentional) are `introspect.js` and `proxy.js` 502 responses, which surface external network errors (e.g. `ECONNREFUSED`) because users need them to diagnose connectivity.
 
 ### `db.js`
 
@@ -532,6 +542,8 @@ Main entrypoint. Returns:
 - `network` / `timeout` / `cancelled` — not saved
 - `size_limit` / `row_limit` / `page_limit` — not saved
 
+**Cursor validation:** after extracting the cursor value via `getPath(responseData, cursor_path)`, the type is checked before use. If `hasNext` is true but the cursor is not a string (e.g. null, number, object), a warning is pushed and the loop breaks rather than sending a bad value to the next page's query variables.
+
 **Per-page timeout:** creates an `AbortController` per page fetch with `setTimeout(timeoutPerPage)`. Combined with user-provided signal via event listener. `clearTimeout` called in a `finally` block.
 
 **Native fetch timeout pattern** (used in `introspect.js` and `settings.js` ping route — node-fetch's proprietary `timeout` option is gone):
@@ -578,7 +590,7 @@ Every route module is a factory function: `module.exports = (db) => router`. Rou
 Returns all rows from `settings` as `{ data: { key: value, ... } }`.
 
 ### `PUT /api/settings`
-Accepts a partial object. Whitelisted keys: `endpoint`, `warn_bytes`, `max_bytes`, `page_size`, `max_page_count`, `max_row_count`, `timeout_per_page_ms`, `builtin_imported`. Unknown keys silently ignored. Uses `INSERT OR REPLACE`. Returns `{ ok: true, data: { ...all settings } }`.
+Accepts a partial object. Whitelisted keys: `endpoint`, `warn_bytes`, `max_bytes`, `page_size`, `max_page_count`, `max_row_count`, `timeout_per_page_ms`, `builtin_imported`. Unknown keys → 400 `unknown_keys`. Numeric keys (`warn_bytes`, `max_bytes`, `page_size`, `max_page_count`, `max_row_count`, `timeout_per_page_ms`) must be positive integers — any other value → 400 `validation_error` before any DB write. Uses `INSERT OR REPLACE`. Returns all settings.
 
 ### `GET /api/settings/ping`
 Reads `endpoint` from settings. POSTs `{ query: '{ __typename }' }` to it (5s timeout). Returns `{ ok: true, latency_ms: N }` or `{ ok: false, error: '...' }`.
@@ -636,6 +648,8 @@ Flow:
 8. Update `queries.last_run_at` and `queries.last_row_count` on success
 9. Return run record (always, even on error, with `id: null` if not saved)
 
+If the DB INSERT succeeds but a subsequent error causes the write to fail silently, `db_save_failed: true` is added to the response so the client knows the result won't appear in history.
+
 **Response shape:**
 ```json
 {
@@ -654,7 +668,8 @@ Flow:
   "graphql_errors": null,
   "warnings": [],
   "notes": null,
-  "ran_at": "2026-05-20T19:00:00.000Z"
+  "ran_at": "2026-05-20T19:00:00.000Z",
+  "db_save_failed": true   // only present when the DB INSERT failed silently
 }
 ```
 
@@ -946,7 +961,7 @@ function formatAge(ranAt, now) {
 
 ### Key callbacks
 
-**`handleSelectQuery(query)`** — sets `selectedQuery`, resets `currentRun`/`runError`/`activeFilters`, initialises `colDivisors` from `field_meta` via `divisorsFromFieldMeta`, then additionally sets `colDivisors[outputName] = 'datetime'` if `timestamp_extraction` is configured (so the extracted field renders as a date in `ResultsTable`). Switches tab to `'editor'`. Then silently auto-loads the most recent saved run via `listRuns(query.id, 1, 0)` + `getRun(id)` and sets `currentRun` if one exists.
+**`handleSelectQuery(query)`** — sets `selectedQuery`, resets `currentRun`/`runError`/`activeFilters`, initialises `colDivisors` from `field_meta` via `divisorsFromFieldMeta`, then additionally sets `colDivisors[outputName] = 'datetime'` if `timestamp_extraction` is configured (so the extracted field renders as a date in `ResultsTable`). Switches tab to `'editor'`. Then silently auto-loads the most recent saved run via `listRuns(query.id, 1, 0, signal)` + `getRun(id, signal)` and sets `currentRun` if one exists. Each call creates an `AbortController` stored in `autoLoadAbortRef`; any previous in-flight auto-load is aborted before the new one starts (prevents stale results from a slower previous fetch overwriting the current one).
 
 **`handleNewQuery()`** — clears `selectedQuery`, `currentRun`, `runError`, `prefillGql`, `colDivisors`.
 
@@ -1201,6 +1216,8 @@ Manages local `view` state (`'table'` | `'chart'`). Renders both `<ResultsTable>
 ---
 
 ### `ResultsChart`
+
+The exported `ResultsChart` default export is wrapped in a `ChartErrorBoundary` class component. If the inner `ResultsChartInner` throws during render (e.g. bad ECharts config, unexpected data shape), the boundary catches it and displays a recoverable error message with a **Retry** button instead of crashing the tab. The boundary resets when the user clicks Retry (`setState({ hasError: false })`).
 
 ```jsx
 <ResultsChart
@@ -1729,8 +1746,8 @@ importQueries(queries)
 
 // Runs
 createRun(body, signal)
-listRuns(queryId, limit=20, offset=0)
-getRun(id)
+listRuns(queryId, limit=20, offset=0, signal?)   // signal aborts in-flight auto-load fetches
+getRun(id, signal?)                               // signal aborts in-flight auto-load fetches
 deleteRun(id)
 patchRun(id, body)
 
@@ -2195,7 +2212,7 @@ CSS class patterns used:
 
 ## 16. Dependency Security Notes
 
-Last audited: **2026-07-16**.
+Last audited: **2026-07-21**.
 
 `npm audit` reports **0 vulnerabilities** across all workspaces. The following were investigated via NVD and GitHub advisories in addition to the npm advisory database:
 
@@ -2212,7 +2229,7 @@ Last audited: **2026-07-16**.
 | — | jszip / fflate | — | — | ✅ Never added — ZIP built with custom `zipBuilder.js` (STORE mode, no dependencies) |
 | — | js-yaml | moderate (jest transitive) | — | ⚠ Unfixable without breaking jest@29; accepted risk (dev-only) |
 
-**SSH deploy key:** `/workspace/extra/github-keys/github_deploy` (ed25519, comment: `nanoclaw-bot`). Push command: `eval "$(ssh-agent -s)" && ssh-add /workspace/extra/github-keys/github_deploy && git push origin main`
+**SSH deploy key:** `/workspace/extra/github-keys/github_deploy` (ed25519, comment: `nanoclaw-bot`). Configured via `~/.ssh/config` (Host `github.com`, `IdentityFile` pointing to the key). Push command: `git push origin main` (no manual `ssh-agent` / `ssh-add` needed once `~/.ssh/config` is in place).
 
 ---
 
