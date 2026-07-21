@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const { serverError } = require('../utils/errors');
 
 function rowToEndpoint(row) {
   let headers = {};
@@ -29,7 +30,7 @@ module.exports = function endpointsRoutes(db) {
       const rows = db.prepare('SELECT * FROM endpoints ORDER BY name').all();
       res.json(rows.map(rowToEndpoint));
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -40,7 +41,7 @@ module.exports = function endpointsRoutes(db) {
       if (!row) return res.status(404).json({ error: 'not_found', message: 'Endpoint not found.' });
       res.json(rowToEndpoint(row));
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -69,7 +70,7 @@ module.exports = function endpointsRoutes(db) {
       const created = db.prepare('SELECT * FROM endpoints WHERE id = ?').get(info.lastInsertRowid);
       res.status(201).json(rowToEndpoint(created));
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -106,7 +107,7 @@ module.exports = function endpointsRoutes(db) {
       const updated = db.prepare('SELECT * FROM endpoints WHERE id = ?').get(req.params.id);
       res.json(rowToEndpoint(updated));
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -118,7 +119,7 @@ module.exports = function endpointsRoutes(db) {
       db.prepare('DELETE FROM endpoints WHERE id = ?').run(req.params.id);
       res.status(204).end();
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 

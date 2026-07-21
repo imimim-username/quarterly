@@ -2,6 +2,7 @@
 
 const express = require('express');
 const { fetchAllPages } = require('../ponder');
+const { serverError } = require('../utils/errors');
 const { validateUrl } = require('../middleware/validateEndpoint');
 const { autoInjectDateFilter } = require('../utils/autoInjectDateFilter');
 
@@ -262,7 +263,9 @@ module.exports = function runsRoutes(db) {
         runRecord.id = info.lastInsertRowid;
       } catch (e) {
         console.error('Failed to save run:', e);
-        // Don't fail the response, just log
+        // Mark the run record so the client knows it wasn't persisted —
+        // history won't show this run, but the result data is still returned.
+        runRecord.db_save_failed = true;
       }
     }
 
@@ -303,7 +306,7 @@ module.exports = function runsRoutes(db) {
       });
       res.json(runs);
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -337,7 +340,7 @@ module.exports = function runsRoutes(db) {
         graphql_errors: parsedGraphqlErrors,
       });
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -353,7 +356,7 @@ module.exports = function runsRoutes(db) {
       db.prepare('UPDATE runs SET notes = ? WHERE id = ?').run(notes ?? null, req.params.id);
       res.json({ ok: true });
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -365,7 +368,7 @@ module.exports = function runsRoutes(db) {
       db.prepare('DELETE FROM runs WHERE id = ?').run(req.params.id);
       res.status(204).end();
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 

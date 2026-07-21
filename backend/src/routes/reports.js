@@ -2,6 +2,7 @@
 
 const express = require('express');
 const { fetchAllPages } = require('../ponder');
+const { serverError } = require('../utils/errors');
 const { validateUrl } = require('../middleware/validateEndpoint');
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -65,7 +66,7 @@ module.exports = function reportsRoutes(db) {
       const reports = db.prepare('SELECT * FROM reports ORDER BY name').all();
       res.json(reports.map(parseReport));
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -84,7 +85,7 @@ module.exports = function reportsRoutes(db) {
       const report = db.prepare('SELECT * FROM reports WHERE id = ?').get(info.lastInsertRowid);
       res.status(201).json({ ...parseReport(report), instances: [] });
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -134,7 +135,7 @@ module.exports = function reportsRoutes(db) {
 
       res.json({ ...parseReport(report), instances });
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -156,7 +157,7 @@ module.exports = function reportsRoutes(db) {
       const updated = db.prepare('SELECT * FROM reports WHERE id = ?').get(req.params.id);
       res.json(parseReport(updated));
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -168,7 +169,7 @@ module.exports = function reportsRoutes(db) {
       db.prepare('DELETE FROM reports WHERE id = ?').run(req.params.id);
       res.status(204).end();
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -198,7 +199,7 @@ module.exports = function reportsRoutes(db) {
       const instance = db.prepare('SELECT * FROM report_instances WHERE id = ?').get(info.lastInsertRowid);
       res.status(201).json(parseInstance(instance));
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -218,7 +219,7 @@ module.exports = function reportsRoutes(db) {
       const updated = db.prepare('SELECT * FROM report_instances WHERE id = ?').get(req.params.iid);
       res.json(parseInstance(updated));
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -231,7 +232,7 @@ module.exports = function reportsRoutes(db) {
       db.prepare('DELETE FROM report_instances WHERE id = ?').run(req.params.iid);
       res.status(204).end();
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -272,7 +273,7 @@ module.exports = function reportsRoutes(db) {
       const saved = db.prepare('SELECT * FROM report_instances WHERE report_id=? ORDER BY position, id').all(req.params.id);
       res.json(saved.map(parseInstance));
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -282,7 +283,7 @@ module.exports = function reportsRoutes(db) {
       const runs = db.prepare('SELECT * FROM report_runs WHERE report_id=? ORDER BY ran_at DESC LIMIT 50').all(req.params.id);
       res.json(runs);
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -296,7 +297,7 @@ module.exports = function reportsRoutes(db) {
       ).all(req.params.report_run_id);
       res.json({ ...reportRun, queries: queryStatuses });
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -379,7 +380,7 @@ module.exports = function reportsRoutes(db) {
       res.json({ id: reportRunId, report_id: parseInt(req.params.id, 10),
         start_date: start_date || null, end_date: end_date || null, endpoint, ran_at: ranAt, queries: queryResults });
     } catch (e) {
-      res.status(500).json({ error: 'server_error', message: e.message });
+      serverError(res, e, 'server_error');
     }
   });
 

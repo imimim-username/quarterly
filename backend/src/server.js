@@ -39,10 +39,10 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, version: '1.0.0' });
 });
 
-// Error handler
+// Error handler — log full details server-side, never leak internals to client
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
-  res.status(500).json({ error: 'server_error', message: err.message });
+  res.status(500).json({ error: 'server_error' });
 });
 
 // Start server bound to loopback only

@@ -387,6 +387,13 @@ async function fetchAllPages(endpoint, query, variables, queryDef, settings, sig
       const hasNext = getPath(responseData, has_next_path);
       const cursor = getPath(responseData, cursor_path);
 
+      // Validate cursor before using it — a non-string cursor would silently
+      // send a bad value to the next page's query variables.
+      if (hasNext && cursor_path && cursor !== null && cursor !== undefined && typeof cursor !== 'string') {
+        warnings.push(`cursor at "${cursor_path}" is not a string (got ${typeof cursor}); pagination stopped early`);
+        break;
+      }
+
       // max_row_count check BEFORE append
       if (allRows.length + rows.length > maxRowCount) {
         return {

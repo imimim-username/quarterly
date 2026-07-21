@@ -67,11 +67,15 @@ export default function App() {
   const [colorSchemes, setColorSchemes] = useState([])
 
   useEffect(() => {
-    listAddressLabels().then(({ data }) => { if (data) setAddressLabels(data) })
+    listAddressLabels()
+      .then(({ data }) => { if (data) setAddressLabels(data) })
+      .catch(e => console.warn('Failed to load address labels:', e))
   }, [])
 
   useEffect(() => {
-    listColorSchemes().then(({ data }) => { if (data) setColorSchemes(data) })
+    listColorSchemes()
+      .then(({ data }) => { if (data) setColorSchemes(data) })
+      .catch(e => console.warn('Failed to load color schemes:', e))
   }, [])
 
   const handleSchemesChange = useCallback(() => {
@@ -85,6 +89,9 @@ export default function App() {
   }, [])
 
   const abortRef = useRef(null)
+  // Separate abort controller for the auto-load of the last run when selecting a query.
+  // Aborted when the user selects a different query before the fetch completes.
+  const autoLoadAbortRef = useRef(null)
   // Lazy-mount the Multi-Query Chart tab so its state survives tab switches.
   // Once activated for the first time, keep it mounted (just hidden) forever.
   const multiMounted = useRef(false)
@@ -105,16 +112,25 @@ export default function App() {
     setTab('editor')
     setHistoryOpen(false)
 
-    // Auto-load the most recent saved run for this query (silent; no spinner)
+    // Auto-load the most recent saved run for this query (silent; no spinner).
+    // Abort any previous in-flight auto-load before starting a new one.
+    if (autoLoadAbortRef.current) autoLoadAbortRef.current.abort()
     if (query?.id) {
+      const controller = new AbortController()
+      autoLoadAbortRef.current = controller
       try {
-        const { data: runs } = await listRuns(query.id, 1, 0)
+        const { data: runs } = await listRuns(query.id, 1, 0, controller.signal)
+        if (controller.signal.aborted) return
         if (Array.isArray(runs) && runs.length > 0) {
-          const { data: run } = await getRun(runs[0].id)
-          if (run) setCurrentRun(run)
+          const { data: run } = await getRun(runs[0].id, controller.signal)
+          if (!controller.signal.aborted && run) setCurrentRun(run)
         }
-      } catch {
-        // silently ignore — user can always run manually
+      } catch (e) {
+        if (e.name !== 'AbortError') {
+          console.warn('Auto-load last run failed:', e)
+        }
+      } finally {
+        if (autoLoadAbortRef.current === controller) autoLoadAbortRef.current = null
       }
     }
   }, [])

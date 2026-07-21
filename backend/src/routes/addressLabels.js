@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const { serverError } = require('../utils/errors');
 
 function rowToLabel(row) {
   return {
@@ -35,7 +36,7 @@ module.exports = function addressLabelsRoutes(db) {
       ).all();
       res.json(rows.map(rowToLabel));
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -46,7 +47,7 @@ module.exports = function addressLabelsRoutes(db) {
       if (!row) return res.status(404).json({ error: 'not_found', message: 'Label not found.' });
       res.json(rowToLabel(row));
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -68,7 +69,7 @@ module.exports = function addressLabelsRoutes(db) {
       if (e.message && e.message.includes('UNIQUE constraint failed')) {
         return res.status(409).json({ error: 'conflict', message: 'A label for this address and chain already exists.' });
       }
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -99,7 +100,7 @@ module.exports = function addressLabelsRoutes(db) {
       if (e.message && e.message.includes('UNIQUE constraint failed')) {
         return res.status(409).json({ error: 'conflict', message: 'A label for this address and chain already exists.' });
       }
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -111,7 +112,7 @@ module.exports = function addressLabelsRoutes(db) {
       db.prepare('DELETE FROM address_labels WHERE id = ?').run(req.params.id);
       res.status(204).end();
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 

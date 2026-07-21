@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const { serverError } = require('../utils/errors');
 
 const REQUIRED_FIELDS = ['name', 'gql', 'result_path'];
 const VALID_PAGINATION = ['offset', 'cursor', 'none'];
@@ -117,7 +118,7 @@ module.exports = function queriesRoutes(db) {
       }
       res.json(queries);
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -133,7 +134,7 @@ module.exports = function queriesRoutes(db) {
         res.status(500).json(e);
       }
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -193,7 +194,7 @@ module.exports = function queriesRoutes(db) {
       const created = db.prepare('SELECT * FROM queries WHERE id = ?').get(info.lastInsertRowid);
       res.status(201).json(rowToQuery(created));
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -242,7 +243,7 @@ module.exports = function queriesRoutes(db) {
       const updated = db.prepare('SELECT * FROM queries WHERE id = ?').get(req.params.id);
       res.json(rowToQuery(updated));
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -260,7 +261,7 @@ module.exports = function queriesRoutes(db) {
           message: 'This query is used by one or more reports. Remove it from all reports before deleting.',
         });
       }
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -351,7 +352,7 @@ module.exports = function queriesRoutes(db) {
       importMany();
       res.json({ imported: results.length, results });
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 

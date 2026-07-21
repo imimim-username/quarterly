@@ -2,6 +2,7 @@
 
 const express = require('express');
 const { validateUrl } = require('../middleware/validateEndpoint');
+const { serverError } = require('../utils/errors');
 
 
 const ALLOWED_KEYS = new Set([
@@ -15,6 +16,30 @@ const ALLOWED_KEYS = new Set([
   'builtin_imported',
 ]);
 
+// Keys whose values must be positive integers (stored as strings, validated before write)
+const POSITIVE_INT_KEYS = new Set([
+  'warn_bytes',
+  'max_bytes',
+  'page_size',
+  'max_page_count',
+  'max_row_count',
+  'timeout_per_page_ms',
+]);
+
+/**
+ * Validate a single settings entry.
+ * Returns an error string, or null if valid.
+ */
+function validateSettingEntry(key, value) {
+  if (POSITIVE_INT_KEYS.has(key)) {
+    const n = Number(value);
+    if (!Number.isInteger(n) || n <= 0) {
+      return `${key} must be a positive integer, got: ${JSON.stringify(value)}`;
+    }
+  }
+  return null;
+}
+
 module.exports = function settingsRoutes(db) {
   const router = express.Router();
   // GET /api/settings — return all settings as key-value object
@@ -27,7 +52,7 @@ module.exports = function settingsRoutes(db) {
       }
       res.json(settings);
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -44,6 +69,14 @@ module.exports = function settingsRoutes(db) {
         error: 'unknown_keys',
         message: `Unknown settings keys: ${unknownKeys.join(', ')}`,
       });
+    }
+
+    // Validate numeric fields before touching the DB
+    for (const [key, value] of Object.entries(updates)) {
+      const err = validateSettingEntry(key, value);
+      if (err) {
+        return res.status(400).json({ error: 'validation_error', message: err });
+      }
     }
 
     try {
@@ -63,7 +96,7 @@ module.exports = function settingsRoutes(db) {
       }
       res.json(settings);
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -74,7 +107,8 @@ module.exports = function settingsRoutes(db) {
       const row = db.prepare("SELECT value FROM settings WHERE key = 'endpoint'").get();
       endpoint = row ? row.value : '';
     } catch (e) {
-      return res.status(500).json({ ok: false, error: 'DB error: ' + e.message });
+      console.error('[db_error] ping route:', e);
+      return res.status(500).json({ ok: false, error: 'Database error.' });
     }
 
     if (!endpoint) {

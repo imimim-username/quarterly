@@ -1,7 +1,45 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react'
+import React, { useState, useMemo, useRef, useEffect, Component } from 'react'
 import * as echarts from 'echarts'
 import { Sketch } from '@uiw/react-color'
 import ColorSchemeManager from './ColorSchemeManager.jsx'
+
+/**
+ * Error boundary that catches rendering/initialisation failures inside the chart
+ * and shows a plain message instead of crashing the whole Results tab.
+ */
+class ChartErrorBoundary extends Component {
+  constructor(props) {
+    super(props)
+    this.state = { hasError: false, message: '' }
+  }
+
+  static getDerivedStateFromError(err) {
+    return { hasError: true, message: err?.message || 'Unknown error' }
+  }
+
+  componentDidCatch(err, info) {
+    console.error('ResultsChart render error:', err, info)
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: 24, color: '#f87171', fontFamily: 'monospace', fontSize: 13 }}>
+          Chart failed to render: {this.state.message}
+          <div style={{ marginTop: 8 }}>
+            <button
+              style={{ fontSize: 12, padding: '4px 12px' }}
+              onClick={() => this.setState({ hasError: false, message: '' })}
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
 
 /**
  * Minimal ECharts React wrapper — no third-party adapter needed.
@@ -267,8 +305,11 @@ function YAxisSelector({
 /**
  * ResultsChart — ECharts dual-axis combo chart with group-by, cumulative
  * transforms, per-series color picking, and color scheme support.
+ *
+ * Wrapped in ChartErrorBoundary so any ECharts initialisation or render
+ * failure shows a recoverable error message instead of crashing the tab.
  */
-export default function ResultsChart({
+function ResultsChartInner({
   rows, fieldMeta = {}, keyField = 'id', colDivisors = {}, onDivisorChange,
   chartViews = [], onSaveView,
   colorSchemes = [], onSchemesChange,
@@ -803,5 +844,13 @@ export default function ResultsChart({
         />
       )}
     </div>
+  )
+}
+
+export default function ResultsChart(props) {
+  return (
+    <ChartErrorBoundary>
+      <ResultsChartInner {...props} />
+    </ChartErrorBoundary>
   )
 }

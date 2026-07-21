@@ -35,9 +35,9 @@ export const importQueries = (queries) => request('POST', '/queries/import', que
 
 // Runs
 export const createRun = (body, signal) => request('POST', '/runs', body, signal);
-export const listRuns = (queryId, limit = 20, offset = 0) =>
-  request('GET', `/runs?query_id=${queryId}&limit=${limit}&offset=${offset}`);
-export const getRun = (id) => request('GET', `/runs/${id}`);
+export const listRuns = (queryId, limit = 20, offset = 0, signal) =>
+  request('GET', `/runs?query_id=${queryId}&limit=${limit}&offset=${offset}`, undefined, signal);
+export const getRun = (id, signal) => request('GET', `/runs/${id}`, undefined, signal);
 export const deleteRun = (id) => request('DELETE', `/runs/${id}`);
 export const patchRun = (id, body) => request('PATCH', `/runs/${id}`, body);
 

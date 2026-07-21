@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const { serverError } = require('../utils/errors');
 
 module.exports = function colorSchemesRoutes(db) {
   const router = express.Router();
@@ -52,7 +53,7 @@ module.exports = function colorSchemesRoutes(db) {
       const rows = db.prepare('SELECT * FROM color_schemes ORDER BY id').all();
       res.json(rows.map(parse));
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 
@@ -63,7 +64,7 @@ module.exports = function colorSchemesRoutes(db) {
       if (!row) return res.status(404).json({ error: 'not_found' });
       res.json(parse(row));
     } catch (e) {
-      res.status(500).json({ error: 'db_error', message: e.message });
+      serverError(res, e, 'db_error');
     }
   });
 

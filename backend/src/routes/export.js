@@ -2,6 +2,7 @@
 
 const express = require('express');
 const archiver = require('archiver');
+const { serverError } = require('../utils/errors');
 const { toJson, toCsv } = require('../export');
 
 
@@ -42,7 +43,7 @@ module.exports = function exportRoutes(db) {
       res.send(toJson(rows));
     } catch (e) {
       if (e.status) return res.status(e.status).json(e);
-      res.status(500).json({ error: 'server_error', message: e.message });
+      serverError(res, e, 'server_error');
     }
   });
 
@@ -71,7 +72,7 @@ module.exports = function exportRoutes(db) {
       res.setHeader('Content-Type', 'text/csv');
       res.send(csvContent);
     } catch (e) {
-      res.status(500).json({ error: 'server_error', message: e.message });
+      serverError(res, e, 'server_error');
     }
   });
 
@@ -123,7 +124,7 @@ module.exports = function exportRoutes(db) {
 
       await archive.finalize();
     } catch (e) {
-      if (!res.headersSent) res.status(500).json({ error: 'server_error', message: e.message });
+      if (!res.headersSent) serverError(res, e, 'server_error');
     }
   });
 

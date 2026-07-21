@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const { serverError } = require('../utils/errors');
 
 const SCHEMA_VERSION = 1;
 const ALLOWED_SETTINGS = ['endpoint', 'warn_bytes', 'max_bytes', 'page_size', 'max_page_count', 'max_row_count', 'timeout_per_page_ms'];
@@ -96,8 +97,7 @@ module.exports = function transferRoutes(db) {
 
       res.json(bundle);
     } catch (e) {
-      console.error('Export error:', e);
-      res.status(500).json({ error: 'export_failed', message: e.message });
+      serverError(res, e, 'export_failed');
     }
   });
 
@@ -167,8 +167,7 @@ module.exports = function transferRoutes(db) {
 
       res.json(result);
     } catch (e) {
-      console.error('Preview error:', e);
-      res.status(500).json({ error: 'preview_failed', message: e.message });
+      serverError(res, e, 'preview_failed');
     }
   });
 
@@ -388,8 +387,7 @@ module.exports = function transferRoutes(db) {
         reports: (decisions.reports || []).filter(d => d.action !== 'skip').map(d => d.name),
       });
     } catch (e) {
-      console.error('Import error:', e);
-      res.status(500).json({ error: 'import_failed', message: e.message });
+      serverError(res, e, 'import_failed');
     }
   });
 
