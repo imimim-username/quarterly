@@ -101,6 +101,101 @@ function downloadAsZip(pngs) {
 let tempIdCounter = 0
 function nextTempId() { return `tmp_${++tempIdCounter}` }
 
+// ─── FilenameModal ────────────────────────────────────────────────────────────
+
+/**
+ * Shown once per PNG during "Generate PNGs".
+ * `proposed` — pre-filled filename string
+ * `onSave(name)` — called with the (possibly edited) filename; continues loop
+ * `onCancel()` — called when user wants to abort the whole operation
+ */
+function FilenameModal({ proposed, onSave, onCancel }) {
+  const [value, setValue] = useState(proposed)
+  const inputRef = useRef(null)
+
+  useEffect(() => {
+    // Select all so the user can immediately start typing a replacement
+    inputRef.current?.select()
+  }, [])
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && value.trim()) onSave(value.trim())
+    if (e.key === 'Escape') onCancel()
+  }
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 2000,
+      background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(2px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+    }}>
+      <div style={{
+        background: 'var(--color-surface)',
+        border: '1px solid var(--color-border)',
+        borderRadius: 10,
+        padding: '28px 32px',
+        minWidth: 440, maxWidth: 620,
+        boxShadow: '0 8px 40px rgba(0,0,0,0.6)',
+        display: 'flex', flexDirection: 'column', gap: 16,
+      }}>
+        <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--color-text)' }}>
+          💾 Name this PNG
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.5 }}>
+          Edit the filename below, then click <strong>Save</strong> to write this file and
+          continue, or <strong>Cancel all</strong> to abort the whole operation.
+        </div>
+        <input
+          ref={inputRef}
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          spellCheck={false}
+          style={{
+            width: '100%', boxSizing: 'border-box',
+            padding: '9px 12px', fontSize: 13,
+            background: 'var(--color-surface2)',
+            color: 'var(--color-text)',
+            border: '1px solid var(--color-border)',
+            borderRadius: 6,
+            fontFamily: 'monospace',
+            letterSpacing: '0.01em',
+          }}
+        />
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+          <button
+            onClick={onCancel}
+            style={{
+              background: 'transparent',
+              border: '1px solid var(--color-error)',
+              color: 'var(--color-error)',
+              padding: '7px 20px', borderRadius: 6,
+              cursor: 'pointer', fontSize: 13,
+            }}
+          >
+            Cancel all
+          </button>
+          <button
+            onClick={() => onSave(value.trim())}
+            disabled={!value.trim()}
+            style={{
+              background: value.trim() ? '#2a6e2a' : 'var(--color-surface2)',
+              border: '1px solid #4caf50',
+              color: value.trim() ? '#fff' : 'var(--color-text-muted)',
+              padding: '7px 22px', borderRadius: 6,
+              cursor: value.trim() ? 'pointer' : 'default',
+              fontWeight: 600, fontSize: 13,
+              transition: 'background 0.15s, color 0.15s',
+            }}
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── ReportBuilder ────────────────────────────────────────────────────────────
 
 /**
@@ -125,11 +220,25 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
   const [error, setError] = useState('')
   const [showQueryPicker, setShowQueryPicker] = useState(false)
 
+  // Filename-prompt modal state — null when hidden, { proposed, resolve } when active
+  const [filenamePrompt, setFilenamePrompt] = useState(null)
+
   // Refs to each ReportInstanceCard (keyed by instance tempId)
   const cardRefs = useRef({})
 
   // Set to true by the Cancel button to break out of the generate loop
   const cancelRef = useRef(false)
+
+  /**
+   * Shows the filename modal pre-populated with `proposed`.
+   * Returns a Promise that resolves to the (possibly edited) filename string,
+   * or null if the user clicked "Cancel all".
+   */
+  const promptFilename = useCallback((proposed) => {
+    return new Promise((resolve) => {
+      setFilenamePrompt({ proposed, resolve })
+    })
+  }, [])
 
   useEffect(() => {
     listQueries().then(({ data }) => setAllQueries(Array.isArray(data) ? data : []))
@@ -290,7 +399,7 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
 
   // Runs in the background after the directory is picked.
   // Called with void so handleGenerate returns immediately and the UI stays live.
-  const runGenerateLoop = useCallback(async (dirHandle, snap) => {
+  const runGenerateLoop = useCallback(async (dirHandle, snap, promptFilenameArg) => {
     const pngs = []   // individual-download fallback
     let saved = 0
     let cancelled = false
@@ -309,12 +418,16 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
         const { dataUrl, filename } = await cardRef.generate()
         if (!dataUrl) continue
 
+        // Ask the user to confirm / edit the filename before saving
+        const chosenName = await promptFilenameArg(filename)
+        if (chosenName === null) { cancelled = true; cancelRef.current = true; break }
+
         if (dirHandle) {
-          await writePngToDir(dirHandle, filename, dataUrl)
+          await writePngToDir(dirHandle, chosenName, dataUrl)
           saved++
           setGenStatus(`${i + 1} / ${snap.length}: ${label} ✓  (${saved} saved)`)
         } else {
-          pngs.push({ dataUrl, filename })
+          pngs.push({ dataUrl, filename: chosenName })
           setGenStatus(`${i + 1} / ${snap.length}: ${label} ✓`)
         }
       } catch (e) {
@@ -366,7 +479,7 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
     setGenStatus(dirHandle ? 'Saving to folder…' : 'Generating PNGs…')
 
     // Fire and forget — the UI stays fully interactive while files save in the background.
-    void runGenerateLoop(dirHandle, snap)
+    void runGenerateLoop(dirHandle, snap, promptFilename)
   }
 
   const handleCancelGenerate = () => {
@@ -527,6 +640,23 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
           </div>
         </div>
       ))}
+
+      {/* Filename-prompt modal — rendered during Generate PNGs */}
+      {filenamePrompt && (
+        <FilenameModal
+          proposed={filenamePrompt.proposed}
+          onSave={(chosenName) => {
+            const resolve = filenamePrompt.resolve
+            setFilenamePrompt(null)
+            resolve(chosenName)
+          }}
+          onCancel={() => {
+            const resolve = filenamePrompt.resolve
+            setFilenamePrompt(null)
+            resolve(null)
+          }}
+        />
+      )}
 
       {/* Floating save button — always visible while editing */}
       <button
