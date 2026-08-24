@@ -68,7 +68,7 @@ export function aggregate(values, method) {
  * @returns {object[]} Array of { x, [field]: value, ... } data points.
  */
 export function buildChartData(rows, xField, yFields, colDivisors, groupBy, yMode, aggregation, xSortDir = 'asc') {
-  if (!rows?.length || !xField || !yFields.length) return []
+  if (!rows?.length || !xField || !yFields?.length) return []
 
   const bucketKey = groupBy === 'none'
     ? r => r[xField]
