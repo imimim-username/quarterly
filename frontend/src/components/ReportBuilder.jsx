@@ -118,17 +118,34 @@ function FilenameModal({ proposed, onSave, onCancel }) {
     inputRef.current?.select()
   }, [])
 
+  // Always ensure the saved name ends with .png (case-insensitive).
+  // If the user deleted the extension we re-append it silently.
+  const commitSave = () => {
+    const trimmed = value.trim()
+    if (!trimmed) return
+    const withExt = trimmed.toLowerCase().endsWith('.png') ? trimmed : `${trimmed}.png`
+    onSave(withExt)
+  }
+
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && value.trim()) onSave(value.trim())
+    if (e.key === 'Enter') commitSave()
     if (e.key === 'Escape') onCancel()
   }
 
+  // Backdrop click = cancel (standard modal UX)
+  const handleBackdropClick = (e) => {
+    if (e.target === e.currentTarget) onCancel()
+  }
+
   return (
-    <div style={{
-      position: 'fixed', inset: 0, zIndex: 2000,
-      background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(2px)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-    }}>
+    <div
+      onClick={handleBackdropClick}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 2000,
+        background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(2px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
       <div style={{
         background: 'var(--color-surface)',
         border: '1px solid var(--color-border)',
@@ -176,7 +193,7 @@ function FilenameModal({ proposed, onSave, onCancel }) {
             Cancel all
           </button>
           <button
-            onClick={() => onSave(value.trim())}
+            onClick={commitSave}
             disabled={!value.trim()}
             style={{
               background: value.trim() ? '#2a6e2a' : 'var(--color-surface2)',
@@ -485,6 +502,13 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
   const handleCancelGenerate = () => {
     cancelRef.current = true
     setGenStatus(prev => prev + '  (cancelling…)')
+    // If a filename modal is currently open, dismiss it immediately so the
+    // loop is unblocked and can exit cleanly — otherwise the UI stays stuck.
+    if (filenamePrompt) {
+      const resolve = filenamePrompt.resolve
+      setFilenamePrompt(null)
+      resolve(null)
+    }
   }
 
   const isNew = !report?.id
