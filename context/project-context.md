@@ -118,7 +118,7 @@ quarterly/                          npm workspace root
 │       │       ├── chartDataUtils.test.js    (56 tests)
 │       │       └── zipBuilder.test.js        (17 tests — CRC-32 vectors + ZIP structural correctness)
 │       └── components/             27 components (see §10)
-│           ├── __tests__/          15 Vitest test files
+│           ├── __tests__/          16 Vitest test files (incl. FilenameModal.test.jsx)
 │           └── ...
 └── queries/
     └── builtin/
@@ -1448,21 +1448,37 @@ Matches rows by `keyField`. For each numeric column, shows `valueA`, `valueB`, `
 - `generating` — bool, true while PNG generation loop is running
 - `genStatus` — string progress message shown during generation (e.g. "3 / 12: chart name ✓")
 - `themeEditorOpen` — bool, toggle for `ReportThemeEditor` panel
+- `filenamePrompt` — `{ proposed: string, resolve: fn } | null` — when non-null the `FilenameModal` is shown; `resolve(name)` continues the loop, `resolve(null)` cancels it
 
 **Behaviour:**
 - Uses `cardRefs` (`useRef({})`) to store `useImperativeHandle` refs keyed by `instance._tempId`. Each ref exposes a `generate()` method.
 - Floating **Save** FAB (bottom-right) calls `handleSave`, which calls `createReport`/`updateReport` then `bulkSaveReportInstances`. Passed `config: { theme: reportTheme }` in both create and update.
 - **Generate PNGs** button calls `handleGenerate`:
   1. Calls `pickDirectory()` — attempts `window.showDirectoryPicker({ mode: 'readwrite' })`. Returns `{ dirHandle, cancelled, error }`. If cancelled (user dismissed dialog), aborts. If API unavailable/blocked, `dirHandle` is null and `error` is set (silently falls through to ZIP).
-  2. Fires `void runGenerateLoop(dirHandle, snap)` — **fire-and-forget** so the UI stays fully interactive during generation.
-  3. `runGenerateLoop` iterates the snapshot, calls `await cardRef.generate()` for each, updates `genStatus` per card. If `dirHandle` is set, writes each PNG directly to disk via `writePngToDir`. If not, collects PNGs and calls `downloadAsZip` at the end.
-  4. A **Cancel** button sets `cancelRef.current = true` which breaks the loop after the current card finishes.
+  2. Fires `void runGenerateLoop(dirHandle, snap, promptFilename)` — **fire-and-forget** so the UI stays fully interactive during generation.
+  3. `runGenerateLoop` iterates the snapshot. For each card, calls `await cardRef.generate()` to get `{ dataUrl, filename }`, then calls `await promptFilename(filename)` which shows the `FilenameModal` and awaits user input. If the user clicks **Save**, the modal resolves with the chosen name (`.png` appended if missing) and the loop continues. If the user clicks **Cancel all** or the toolbar Cancel fires, the modal resolves with `null` and the loop aborts.
+  4. After resolving the filename, writes the PNG: if `dirHandle` is set → `writePngToDir(dirHandle, chosenName, dataUrl)`; otherwise pushes to `pngs[]` for ZIP.
+  5. A **Cancel** button sets `cancelRef.current = true` and, if the filename modal is open, immediately resolves the pending promise with `null` (via `handleCancelGenerate`).
 - `cancelRef` — `useRef(false)`, checked each iteration of `runGenerateLoop`. Set by the Cancel button.
+- `promptFilename(proposed)` — `useCallback` returning a `new Promise(resolve => setFilenamePrompt({ proposed, resolve }))`. Stable dep-array `[]` (passed as a parameter to `runGenerateLoop` to avoid closure issues).
+- `handleCancelGenerate` — sets `cancelRef.current = true`, updates `genStatus` with "(cancelling…)", and if `filenamePrompt` is non-null immediately calls `resolve(null)` and clears state.
 - Each card receives an `onClone` prop — ⧉ Clone button on the Run Preview row (flush right via `marginLeft: 'auto'`). `cloneInstance(tempId)` inserts a copy immediately after the original with label `"${label} (copy)"`.
 - `handleSave` does NOT trigger a reload/remount — it calls `onSave(saved)` which only updates the report reference in `ReportsPanel` (no `setLoading`).
 - `ReportThemeEditor` is rendered as a collapsible panel above the instances list.
 - Each `ReportInstanceCard` receives `reportTheme`, `startDate`, `endDate`, `addressLabels`.
 - Color scheme selector: selects from `colorSchemes` prop; applying a scheme sets `reportTheme.palette` to the scheme's colors (merged via `normaliseTheme`).
+
+**`FilenameModal` component** (defined in `ReportBuilder.jsx`):
+
+```jsx
+function FilenameModal({ proposed, onSave, onCancel }) { ... }
+```
+
+- Pre-fills input with `proposed` filename and auto-selects text on mount
+- **Save** button (disabled when trimmed value is empty) calls `onSave(withExt)` where `withExt` appends `.png` if the name doesn't already end with `.png` (case-insensitive)
+- **Cancel all** button calls `onCancel()`
+- Enter key → Save; Escape key → Cancel; backdrop click (only on the overlay itself, not the card) → Cancel
+- Rendered at `zIndex: 2000` as a fixed full-screen overlay with `backdropFilter: blur(2px)`
 
 **`pickDirectory()` (module-level):**
 ```js
@@ -1869,6 +1885,9 @@ Extracted from `ReportInstanceCard` so the functions can be unit-tested without 
 **`aggregate(values, method)`** — reduces a `number[]` using `sum` (default), `avg`, `median`, `min`, `max`, or `count`. Filters nulls/NaN before aggregating. Returns `null` for empty arrays.
 
 **`buildChartData(rows, xField, yFields, colDivisors, groupBy, yMode, aggregation, xSortDir)`** — the main chart data builder used by `ReportInstanceCard`:
+
+Guard: `if (!rows?.length || !xField || !yFields?.length) return []` — both `rows` and `yFields` are optional-chained so the function is safe against null/undefined arguments.
+
 1. Groups rows into a `Map<bucketKey, { [field]: number[] }>` using `bucketTimestamp`
 2. Aggregates each bucket with `aggregate(values, aggregation)`
 3. Sorts by X value (numeric then string fallback), reversed if `xSortDir === 'desc'`
@@ -1895,17 +1914,19 @@ The critical design constraint: `ReportBuilder` must NOT be unmounted between sa
 **Generate PNGs flow (`ReportBuilder.handleGenerate` + `runGenerateLoop`):**
 1. `handleGenerate` calls `pickDirectory()` — tries `window.showDirectoryPicker`. Returns `{ dirHandle, cancelled, error }`.
 2. If user cancelled the picker, returns immediately (no generation).
-3. Snapshots `instances` array, sets `generating = true`, fires `void runGenerateLoop(dirHandle, snap)` and returns. The UI remains fully interactive.
+3. Snapshots `instances` array, sets `generating = true`, fires `void runGenerateLoop(dirHandle, snap, promptFilename)` and returns. The UI remains fully interactive.
 4. `runGenerateLoop` iterates the snapshot. For each card:
+   - Checks `cancelRef.current`; breaks loop if true
    - Updates `genStatus` with progress (e.g. `"3 / 12: My Chart"`)
    - Calls `await cardRef.generate()` — expands the card, runs preview if needed, returns `{ dataUrl, filename }`
-   - If `dirHandle` is set: calls `writePngToDir(dirHandle, filename, dataUrl)` → writes file directly to the user-chosen folder
-   - If `dirHandle` is null: pushes to `pngs[]` array for ZIP
-   - Checks `cancelRef.current` before each card; breaks loop if true
+   - Shows the **FilenameModal** via `await promptFilenameArg(filename)`:
+     - User edits the name and clicks **Save** → resolves with the chosen name (`.png` suffix enforced) → loop continues
+     - User clicks **Cancel all** or toolbar Cancel fires → resolves with `null` → sets `cancelled = true`, breaks loop
+   - Writes the PNG using the chosen filename: `writePngToDir(dirHandle, chosenName, dataUrl)` if folder mode; otherwise pushes to `pngs[]`
 5. After the loop: if folder mode, shows saved count. If ZIP mode, calls `downloadAsZip(pngs)` → one ZIP dialog.
-6. Sets `generating = false`.
+6. Sets `generating = false`, clears `filenamePrompt` state.
 
-**Cancel button:** sets `cancelRef.current = true`. Loop checks this at the start of each iteration and breaks. Status shows how many were already saved/collected.
+**Cancel button (`handleCancelGenerate`):** sets `cancelRef.current = true`. If `filenamePrompt` is currently non-null (modal is open), immediately calls its `resolve(null)` and clears `filenamePrompt` — this unblocks the awaiting loop so it can exit cleanly. Status shows "(cancelling…)".
 
 **Why cards start collapsed:** saved instances (`instance.id` exists) initialize `expanded = false`. A collapsed card has `MiniChart` unmounted → `chartInstanceRef.current = null` → `getDataURL` cannot be called. The `generate()` method calls `setExpanded(true)` first, then polls until `chartInstanceRef.current` is non-null (up to 5 s).
 
@@ -2110,7 +2131,7 @@ Run: `npm test --workspace=frontend`
 
 Config: `vitest.config.js` with `environment: 'jsdom'`, `setupFiles: ['@testing-library/jest-dom/vitest']`.
 
-**16 test files, 331 tests total (as of 2026-07-16):**
+**17 test files, 344 tests total (as of 2026-08-24):**
 
 | File | Tests | Coverage |
 |---|---|---|
@@ -2119,6 +2140,7 @@ Config: `vitest.config.js` with `environment: 'jsdom'`, `setupFiles: ['@testing-
 | `components/__tests__/ColorSchemeManager.test.jsx` | 32 | List rendering (swatches, default badge), set default, delete, create, edit (name/colors/theme), "Override chart appearance" checkbox behavior (opt-in, pre-checked for themed schemes, hides/shows pickers), save with and without theme, update scheme with and without theme |
 | `components/__tests__/ResultsView.test.jsx` | 22 | Renders table by default, chart tab switch (Chart button), `display:none` toggling (both children always mounted), props flow through (divisors, filters, save view), color scheme props forwarded to ResultsChart |
 | `components/__tests__/MultiQueryChart.test.jsx` | 25 | Initial render, query loading, add/remove datasets, run datasets (createRun args with start_date/end_date), auto-xField, series add/remove, chart controls, Run All, dataset config selectors. Mocks: `vi.mock('../../api/client.js')`, `vi.mock('echarts')`, `global.ResizeObserver` stub |
+| `components/__tests__/FilenameModal.test.jsx` | 13 | Modal appearance with pre-fill, Save disabled/enabled, Save/Enter/Escape/Cancel all/backdrop click, `.png` appended when missing, `.png` not double-appended, case-insensitive `.PNG` check, toolbar Cancel dismisses modal, cancelling status message. Mocks: `api/client.js`, `ReportThemeEditor.jsx`, `ReportInstanceCard.jsx` (exposes `generate()` via `useImperativeHandle`), `zipBuilder.js` |
 | `utils/__tests__/computedColumns.test.js` | 115 | `parseFormula` (valid/invalid/empty), `applyComputedColumns` (no defs, arithmetic, divisors, zero, chaining, invalid formula, div-by-zero, prototype blocking), `computedFieldMeta`, custom parser operators |
 | `utils/__tests__/timestampExtraction.test.js` | 25 | `applyTimestampExtraction` (null config, before/after position, missing field, delimiter variants), `timestampExtractionMeta` |
 | `utils/__tests__/mergeDatasets.test.js` | 38 | Guard cases, aggregation (sum/avg/min/max/count/median), groupBy (day/week/month), cumulative, divisors, two-dataset union join, same-column collision prevention, type-compatible X alignment, three datasets, formatXLabel |
@@ -2131,7 +2153,7 @@ Config: `vitest.config.js` with `environment: 'jsdom'`, `setupFiles: ['@testing-
 | `utils/__tests__/chartDataUtils.test.js` | 56 | `buildChartData` edge cases: bucket collapsing, cumulative across grouped data, divisors, aggregation modes, empty series |
 | `utils/__tests__/zipBuilder.test.js` | 17 | `crc32` standard vectors (empty, single byte, hello world, 0xFF run), `buildZipBytes` structural correctness (signatures, local/central headers, EOCD, entry counts, offsets, UTF-8 filenames, multi-file) |
 
-**Grand total: 578 tests (331 frontend Vitest + 240 backend Jest passing + 7 skipped)**
+**Grand total: 591 tests (344 frontend Vitest + 240 backend Jest passing + 7 skipped)**
 
 Backend test counts: 11 test files, 247 total (240 passing + 7 skipped integration tests gated by `process.env.INTEGRATION`). The 7 skipped tests in `runs.test.js` / `ponder.test.js` require a live Ponder endpoint.
 
@@ -2153,6 +2175,17 @@ vi.mock('../../utils/addressLabels.js', () => ({
 ```
 
 **Key `computedColumns.test.js` note:** The custom parser supports unary minus and the `^` exponentiation operator. Tests use `'(a + b'` (unclosed paren) as the canonical invalid-syntax case. Prototype property access (e.g., `__proto__`) is blocked and results in `null`. The test suite has 115 tests covering all parser operators, edge cases, chaining, and security guards.
+
+**`FilenameModal.test.jsx` helpers:** the modal is nested inside `ReportBuilder` with multiple other inputs, so tests use DOM selectors rather than generic `getByRole`:
+```js
+function getModalCard() { return document.querySelector('[style*="border-radius: 10px"]') }
+function getModalInput() { return document.querySelector('input[spellcheck="false"]') }
+function getModalSaveBtn() { return within(getModalCard()).getByRole('button', { name: 'Save' }) }
+function getModalCancelBtn() { return within(getModalCard()).getByRole('button', { name: 'Cancel all' }) }
+```
+The backdrop-click test requires `Object.defineProperty` on the event's `target`/`currentTarget` because jsdom does not propagate those naturally on `fireEvent.click(overlay)`.
+
+**Promise stored in React state:** `setFilenamePrompt({ proposed, resolve })` stores the Promise resolver function as a property of a plain object — not as a top-level function argument to `setState`, so React never treats it as an updater function. This is safe.
 
 ---
 
@@ -2212,7 +2245,7 @@ CSS class patterns used:
 
 ## 16. Dependency Security Notes
 
-Last audited: **2026-07-21**.
+Last audited: **2026-08-24**.
 
 `npm audit` reports **0 vulnerabilities** across all workspaces. The following were investigated via NVD and GitHub advisories in addition to the npm advisory database:
 
@@ -2229,7 +2262,7 @@ Last audited: **2026-07-21**.
 | — | jszip / fflate | — | — | ✅ Never added — ZIP built with custom `zipBuilder.js` (STORE mode, no dependencies) |
 | — | js-yaml | moderate (jest transitive) | — | ⚠ Unfixable without breaking jest@29; accepted risk (dev-only) |
 
-**SSH deploy key:** `/workspace/extra/github-keys/github_deploy` (ed25519, comment: `nanoclaw-bot`). Configured via `~/.ssh/config` (Host `github.com`, `IdentityFile` pointing to the key). Push command: `git push origin main` (no manual `ssh-agent` / `ssh-add` needed once `~/.ssh/config` is in place).
+**SSH deploy key:** ed25519 key stored in the nanoclaw data directory (path not committed here). Configured by passing `GIT_SSH_COMMAND="ssh -i <key-path> -o StrictHostKeyChecking=no"` before the push command, or via `~/.ssh/config`. Push command: `git push origin main`.
 
 ---
 

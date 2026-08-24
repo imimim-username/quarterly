@@ -216,6 +216,7 @@ The Preview modal also shows ready-to-run code snippets in Python, curl, TypeScr
 Click the **Reports** tab to group queries into a named report. Click **+ New Report**, add queries, then click **Run Report** to execute all of them with the current date range.
 
 - Failures are recorded per query but don't stop the rest.
+- Click **Generate PNGs** to export every chart card to PNG. For each card a **filename modal** appears pre-filled with a suggested name — edit it, click **Save** to write the file and continue to the next card, or **Cancel all** to abort. Files go directly to a folder you choose (File System Access API), or into a single ZIP download if your browser does not support the folder picker.
 - Download a ZIP of all successful result CSVs.
 - Click **Compare** on two past report runs to see a side-by-side comparison across all queries.
 
@@ -549,6 +550,10 @@ Test files in `backend/tests/`:
 | `runs.test.js` | Run execution, error cases, PATCH notes, GET/DELETE |
 | `settings.test.js` | Settings GET/PUT/ping |
 | `endpoints.test.js` | Endpoint profile CRUD, `is_default` exclusivity |
+| `colorSchemes.test.js` | Color scheme CRUD, theme validation, set-default |
+| `reports.test.js` | Report CRUD, instance CRUD, bulk-save, legacy routes |
+| `addressLabels.test.js` | Address label CRUD, UNIQUE constraint, 404 cases |
+| `date_filtering.test.js` | Auto-inject date filter, retry-without-injection path |
 
 Tests that require `better-sqlite3` native compilation auto-skip if the native module is unavailable (e.g. CI without build tools).
 
@@ -566,11 +571,16 @@ Test files in `frontend/src/components/__tests__/`:
 |---|---|
 | `QuerySidebar.test.jsx` | Query list rendering, search filter, selection, clone button hover/click |
 | `ResultsTable.test.jsx` | Column rendering, full-text search, column visibility, stats bar picker, copy menu |
+| `ResultsView.test.jsx` | Table/chart tab switching, `display:none` toggling, props forwarding |
 | `HistoryDrawer.test.jsx` | Run list rendering, note editing, save/cancel flow |
 | `EndpointProfilesModal.test.jsx` | Profile list, create form, use/delete actions |
 | `QueryPreviewModal.test.jsx` | Endpoint/GQL/variable display, tab switching, copy button |
 | `EndpointBar.test.jsx` | Ping flow, schema explorer button visibility, URL validation |
 | `SchemaExplorer.test.jsx` | Render, use-query button state, onClose |
+| `ComputedColumnsEditor.test.jsx` | Add/edit/delete computed columns, formula validation, reorder |
+| `ColorSchemeManager.test.jsx` | Scheme list, set default, create/edit/delete, theme override checkbox |
+| `MultiQueryChart.test.jsx` | Dataset add/remove/run, series config, Run All, chart controls |
+| `FilenameModal.test.jsx` | Pre-fill, Save/Enter/Escape/Cancel/backdrop, `.png` enforcement, toolbar cancel |
 
 Test files in `frontend/src/utils/__tests__/`:
 
@@ -578,6 +588,9 @@ Test files in `frontend/src/utils/__tests__/`:
 |---|---|
 | `computedColumns.test.js` | Formula parsing, field reference resolution, arithmetic operators, safe evaluation (no eval) |
 | `timestampExtraction.test.js` | Delimiter splitting, position selection, Unix timestamp parsing, output field construction |
+| `mergeDatasets.test.js` | Union join, aggregation modes, cumulative, divisors, multi-dataset alignment |
+| `chartDataUtils.test.js` | `buildChartData` bucketing, cumulative, divisors, aggregation, edge cases |
+| `zipBuilder.test.js` | CRC-32 vectors, ZIP structural correctness (headers, EOCD, UTF-8 filenames) |
 
 ---
 
@@ -602,7 +615,11 @@ quarterly/
 │   │   │   ├── 003_chart_views.js
 │   │   │   ├── 004_endpoints_and_run_notes.js
 │   │   │   ├── 005_computed_columns.js
-│   │   │   └── 006_timestamp_extraction.js
+│   │   │   ├── 006_timestamp_extraction.js
+│   │   │   ├── 007_color_schemes.js
+│   │   │   ├── 008_color_scheme_theme.js
+│   │   │   ├── 009_report_instances.js
+│   │   │   └── 010_report_config.js
 │   │   └── routes/
 │   │       ├── queries.js
 │   │       ├── runs.js
@@ -623,7 +640,11 @@ quarterly/
 │       ├── queries.test.js
 │       ├── runs.test.js
 │       ├── settings.test.js
-│       └── endpoints.test.js
+│       ├── endpoints.test.js
+│       ├── colorSchemes.test.js
+│       ├── reports.test.js
+│       ├── addressLabels.test.js
+│       └── date_filtering.test.js
 ├── frontend/
 │   ├── vite.config.js
 │   ├── vitest.config.js
@@ -635,22 +656,34 @@ quarterly/
 │       │   ├── addressLabels.js
 │       │   ├── computedColumns.js
 │       │   ├── timestampExtraction.js
+│       │   ├── mergeDatasets.js
+│       │   ├── chartDataUtils.js
+│       │   ├── zipBuilder.js
 │       │   └── __tests__/
 │       │       ├── computedColumns.test.js
-│       │       └── timestampExtraction.test.js
+│       │       ├── timestampExtraction.test.js
+│       │       ├── mergeDatasets.test.js
+│       │       ├── chartDataUtils.test.js
+│       │       └── zipBuilder.test.js
 │       └── components/
 │           ├── EndpointBar.jsx
 │           ├── DateRangePicker.jsx
 │           ├── QuerySidebar.jsx
 │           ├── QueryEditor.jsx
 │           ├── VariablePanel.jsx
+│           ├── ComputedColumnsEditor.jsx
+│           ├── ResultsView.jsx
 │           ├── ResultsTable.jsx
 │           ├── ResultsChart.jsx
 │           ├── ResultFilters.jsx
+│           ├── ColorSchemeManager.jsx
 │           ├── ExportButtons.jsx
 │           ├── HistoryDrawer.jsx
 │           ├── CompareView.jsx
+│           ├── MultiQueryChart.jsx
 │           ├── ReportBuilder.jsx
+│           ├── ReportInstanceCard.jsx
+│           ├── ReportThemeEditor.jsx
 │           ├── ReportCompareView.jsx
 │           ├── ReportsPanel.jsx
 │           ├── ChainFilter.jsx
@@ -662,11 +695,16 @@ quarterly/
 │           └── __tests__/
 │               ├── QuerySidebar.test.jsx
 │               ├── ResultsTable.test.jsx
+│               ├── ResultsView.test.jsx
 │               ├── HistoryDrawer.test.jsx
 │               ├── EndpointProfilesModal.test.jsx
 │               ├── QueryPreviewModal.test.jsx
 │               ├── EndpointBar.test.jsx
-│               └── SchemaExplorer.test.jsx
+│               ├── SchemaExplorer.test.jsx
+│               ├── ComputedColumnsEditor.test.jsx
+│               ├── ColorSchemeManager.test.jsx
+│               ├── MultiQueryChart.test.jsx
+│               └── FilenameModal.test.jsx
 ├── queries/
 │   └── builtin/
 │       ├── myt_deposits.json
