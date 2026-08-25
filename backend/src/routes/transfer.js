@@ -82,17 +82,28 @@ module.exports = function transferRoutes(db) {
 
       // Reports + instances (always included)
       const reportRows = db.prepare('SELECT * FROM reports ORDER BY name').all();
+      // Build a query id→name map so cross-system imports can match by name
+      const queryNameMap = {};
+      db.prepare('SELECT id, name FROM queries').all().forEach(q => { queryNameMap[q.id] = q.name; });
       bundle.reports = reportRows.map(r => {
         let instances = [];
+        let reportConfig = null;
+        try { reportConfig = r.config ? JSON.parse(r.config) : null; } catch {}
         try {
           instances = db.prepare('SELECT * FROM report_instances WHERE report_id=? ORDER BY position, id').all(r.id)
             .map(inst => {
               let config;
               try { config = JSON.parse(inst.config || '{}'); } catch { config = {}; }
-              return { query_id: inst.query_id, position: inst.position, label: inst.label, config };
+              return {
+                query_id: inst.query_id,
+                query_name: queryNameMap[inst.query_id] ?? null,
+                position: inst.position,
+                label: inst.label,
+                config,
+              };
             });
         } catch (_) {}
-        return { name: r.name, description: r.description || '', instances };
+        return { name: r.name, description: r.description || '', config: reportConfig, instances };
       });
 
       res.json(bundle);
@@ -327,6 +338,12 @@ module.exports = function transferRoutes(db) {
         // ── Reports ──
         const reportDecisions = decisions.reports || [];
         const bundleReports = bundle.reports || [];
+
+        // Build a query name→local-id map (includes any just-imported queries) so that
+        // instances can be remapped by name when moving between systems with different IDs.
+        const localQueryIdByName = {};
+        db.prepare('SELECT id, name FROM queries').all().forEach(q => { localQueryIdByName[q.name] = q.id; });
+
         for (const decision of reportDecisions) {
           if (decision.action === 'skip') continue;
           const bundleReport = bundleReports.find(r => r.name === decision.name);
@@ -356,14 +373,27 @@ module.exports = function transferRoutes(db) {
             reportId = info.lastInsertRowid;
           }
 
-          // Insert instances (query_id must exist in this DB)
+          // Restore report-level config (theme) if present in bundle
+          if (bundleReport.config != null) {
+            db.prepare('UPDATE reports SET config=? WHERE id=?')
+              .run(JSON.stringify(bundleReport.config), reportId);
+          }
+
+          // Insert instances — resolve query_id by name first (cross-system safe),
+          // falling back to numeric id for same-system / legacy bundles.
           const insertInst = db.prepare(
             'INSERT INTO report_instances (report_id, query_id, position, label, config, created_at) VALUES (?,?,?,?,?,?)'
           );
           for (const inst of (bundleReport.instances || [])) {
-            const q = db.prepare('SELECT id FROM queries WHERE id = ?').get(inst.query_id);
-            if (!q) continue; // skip if query doesn't exist in this DB
-            insertInst.run(reportId, inst.query_id, inst.position ?? 0, inst.label ?? '', JSON.stringify(inst.config ?? {}), now);
+            let localQueryId = null;
+            if (inst.query_name != null && localQueryIdByName[inst.query_name] != null) {
+              localQueryId = localQueryIdByName[inst.query_name];
+            } else {
+              const q = db.prepare('SELECT id FROM queries WHERE id = ?').get(inst.query_id);
+              localQueryId = q ? q.id : null;
+            }
+            if (localQueryId == null) continue; // query not found in this DB — skip
+            insertInst.run(reportId, localQueryId, inst.position ?? 0, inst.label ?? '', JSON.stringify(inst.config ?? {}), now);
           }
         }
 
