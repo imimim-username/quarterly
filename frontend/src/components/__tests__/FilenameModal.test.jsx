@@ -455,3 +455,65 @@ describe('PngExportModal — default filename format', () => {
     expect(input.value).not.toMatch(/[/:?]/)
   })
 })
+
+// ─── .png extension enforcement ──────────────────────────────────────────────
+
+describe('PngExportModal — .png extension enforcement on OK', () => {
+  it('appends .png when user removes the extension before clicking OK', async () => {
+    const { buildZipBytes } = await import('../../utils/zipBuilder.js')
+
+    render(<ReportBuilder report={makeReport()} {...baseProps} />)
+    fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
+
+    fireEvent.change(getFilenameInputs()[0], { target: { value: 'my-chart' } })
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }))
+
+    await waitFor(() => expect(buildZipBytes).toHaveBeenCalled(), { timeout: 5000 })
+    expect(buildZipBytes.mock.calls[0][0][0].name).toBe('my-chart.png')
+  })
+
+  it('does not double-append .png when extension already present', async () => {
+    const { buildZipBytes } = await import('../../utils/zipBuilder.js')
+
+    render(<ReportBuilder report={makeReport()} {...baseProps} />)
+    fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
+
+    fireEvent.change(getFilenameInputs()[0], { target: { value: 'already-correct.png' } })
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }))
+
+    await waitFor(() => expect(buildZipBytes).toHaveBeenCalled(), { timeout: 5000 })
+    expect(buildZipBytes.mock.calls[0][0][0].name).toBe('already-correct.png')
+  })
+
+  it('extension check is case-insensitive — .PNG not double-extended', async () => {
+    const { buildZipBytes } = await import('../../utils/zipBuilder.js')
+
+    render(<ReportBuilder report={makeReport()} {...baseProps} />)
+    fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
+
+    fireEvent.change(getFilenameInputs()[0], { target: { value: 'UPPERCASE.PNG' } })
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }))
+
+    await waitFor(() => expect(buildZipBytes).toHaveBeenCalled(), { timeout: 5000 })
+    expect(buildZipBytes.mock.calls[0][0][0].name).toBe('UPPERCASE.PNG')
+  })
+})
+
+// ─── Escape works immediately on open (auto-focus) ────────────────────────────
+
+describe('PngExportModal — Escape works immediately on open', () => {
+  it('Escape on the backdrop closes the modal without any prior click', async () => {
+    render(<ReportBuilder report={makeReport()} {...baseProps} />)
+    fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
+
+    // Fire Escape directly on the backdrop (which should be auto-focused)
+    const backdrop = getBackdrop()
+    fireEvent.keyDown(backdrop, { key: 'Escape' })
+
+    await waitFor(() => expect(screen.queryByText('⬇ Export PNGs')).not.toBeInTheDocument())
+  })
+})

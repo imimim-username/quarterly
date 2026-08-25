@@ -34,13 +34,6 @@ function normaliseTheme(partial) {
 // ─── PNG generation helpers ───────────────────────────────────────────────────
 
 /**
- * Try to open a folder picker (File System Access API).
- * Returns { dirHandle, cancelled, error }.
- *   dirHandle  — FileSystemDirectoryHandle on success
- *   cancelled  — true if the user dismissed the picker (AbortError)
- *   error      — human-readable string if the API threw for any other reason
- */
-/**
  * Try to open a native folder picker (File System Access API).
  * Returns { dirHandle, cancelled, error }.
  *   dirHandle  — FileSystemDirectoryHandle on success
@@ -152,6 +145,10 @@ function PngExportModal({ instances, startDate, endDate, onConfirm, onCancel }) 
     }))
   )
 
+  // Auto-focus the backdrop so Escape works immediately on open
+  const backdropRef = useRef(null)
+  useEffect(() => { backdropRef.current?.focus() }, [])
+
   // ── Conflict detection (derived — no extra state) ──
   // Only count filenames for checked items: unchecked charts won't be generated,
   // so their filenames don't participate in conflict detection.
@@ -177,11 +174,12 @@ function PngExportModal({ instances, startDate, endDate, onConfirm, onCancel }) 
     onConfirm(
       items
         .filter(it => it.checked)
-        .map(it => ({
-          tempId:   it.tempId,
-          filename: it.filename.trim() || buildDefaultFilename(it.label, startDate, endDate),
-          label:    it.label,
-        }))
+        .map(it => {
+          const raw = it.filename.trim() || buildDefaultFilename(it.label, startDate, endDate)
+          // Always ensure the filename ends with .png (case-insensitive)
+          const withExt = raw.toLowerCase().endsWith('.png') ? raw : `${raw}.png`
+          return { tempId: it.tempId, filename: withExt, label: it.label }
+        })
     )
   }
 
@@ -190,6 +188,7 @@ function PngExportModal({ instances, startDate, endDate, onConfirm, onCancel }) 
 
   return (
     <div
+      ref={backdropRef}
       onClick={handleBackdrop}
       onKeyDown={handleKeyDown}
       tabIndex={-1}
@@ -361,6 +360,7 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
     setReportTheme(normaliseTheme(report?.config?.theme))
     setError('')
     setGenStatus('')
+    setShowExportModal(false)
     cardRefs.current = {}
   }, [report?.id])
 
