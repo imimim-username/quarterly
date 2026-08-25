@@ -178,6 +178,27 @@ function evalTokens(tokens, scope) {
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
+ * Extract all variable names referenced in a formula.
+ * Returns a deduplicated array of identifier names, in order of first appearance.
+ * Returns [] for an empty, invalid, or non-string formula.
+ * Used to determine which input-divisor chips to render for a computed Y-field.
+ */
+export function getFormulaVariables(formula) {
+  if (!formula || typeof formula !== 'string' || !formula.trim()) return []
+  const tokens = tokenize(formula.trim())
+  if (!tokens) return []
+  const seen = new Set()
+  const result = []
+  for (const tok of tokens) {
+    if (tok.t === T_VAR && !seen.has(tok.v)) {
+      seen.add(tok.v)
+      result.push(tok.v)
+    }
+  }
+  return result
+}
+
+/**
  * Validate a formula string.
  * Returns the formula string if syntactically valid, null otherwise.
  * Used for live validation in ComputedColumnsEditor (no scope needed).

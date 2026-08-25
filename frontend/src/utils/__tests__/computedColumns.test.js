@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { applyComputedColumns, computedFieldMeta, parseFormula } from '../computedColumns.js'
+import { applyComputedColumns, computedFieldMeta, parseFormula, getFormulaVariables } from '../computedColumns.js'
 
 // Helper: evaluate a formula against a flat scope via applyComputedColumns
 function evalFormula(formula, scope = {}) {
@@ -345,5 +345,132 @@ describe('SECURITY — scope isolation between rows', () => {
     const original = JSON.parse(JSON.stringify(rows))
     applyComputedColumns(rows, [{ name: 'sum', label: '', formula: 'a + b' }], {})
     expect(rows).toEqual(original)
+  })
+})
+
+describe('getFormulaVariables', () => {
+  it('returns [] for empty string', () => {
+    expect(getFormulaVariables('')).toEqual([])
+  })
+
+  it('returns [] for whitespace-only string', () => {
+    expect(getFormulaVariables('   ')).toEqual([])
+  })
+
+  it('returns [] for null / undefined', () => {
+    expect(getFormulaVariables(null)).toEqual([])
+    expect(getFormulaVariables(undefined)).toEqual([])
+  })
+
+  it('returns [] for an invalid/unparseable formula', () => {
+    // Unexpected character — tokenizer returns null
+    expect(getFormulaVariables('a @ b')).toEqual([])
+  })
+
+  it('returns a single variable for a one-variable formula', () => {
+    expect(getFormulaVariables('totalSupply')).toEqual(['totalSupply'])
+  })
+
+  it('returns multiple variables in order of first appearance', () => {
+    expect(getFormulaVariables('totalAssets / totalSupply')).toEqual(['totalAssets', 'totalSupply'])
+  })
+
+  it('deduplicates repeated variable references', () => {
+    expect(getFormulaVariables('a + a * a')).toEqual(['a'])
+  })
+
+  it('deduplicates across mixed repeated and new variables', () => {
+    expect(getFormulaVariables('(a + b) / a')).toEqual(['a', 'b'])
+  })
+
+  it('returns [] for a formula with only numeric literals and operators', () => {
+    expect(getFormulaVariables('1 + 2 * 3')).toEqual([])
+  })
+
+  it('handles nested expressions with multiple variables', () => {
+    expect(getFormulaVariables('(x + y) * (z - x)')).toEqual(['x', 'y', 'z'])
+  })
+})
+
+// ─── enrichedRows pattern — per-field input divisors ──────────────────────────
+//
+// These tests validate the chaining pattern used by the enrichedRows useMemo
+// in ReportInstanceCard: one applyComputedColumns call per computed field,
+// each with its own inputDivisors, so different columns within the same
+// formula can have different divisors.
+
+describe('enrichedRows pattern — per-field input divisors', () => {
+  it('applies ÷1e18 to totalSupply and ÷1e6 to totalAssets before dividing', () => {
+    // totalAssets = 5_000_000 (5 USDC-scale), totalSupply = 2_000_000_000_000_000_000 (2 WAD)
+    // With divisors: 5_000_000 / 1e6 = 5, 2_000_000_000_000_000_000 / 1e18 = 2
+    // ratio = 5 / 2 = 2.5
+    const rows = [{ totalAssets: '5000000', totalSupply: '2000000000000000000' }]
+    const enriched = applyComputedColumns(
+      rows,
+      [{ name: 'ratio', formula: 'totalAssets / totalSupply' }],
+      { totalAssets: '1e6', totalSupply: '1e18' },
+    )
+    expect(enriched[0].ratio).toBeCloseTo(2.5)
+  })
+
+  it('a later computed field can reference an earlier one (chaining)', () => {
+    // Step 1: diff = a - b with ÷1e6 on both → (4_000_000 / 1e6) - (1_000_000 / 1e6) = 3
+    // Step 2: doubled = diff * 2, no additional divisors → 6
+    const rows = [{ a: '4000000', b: '1000000' }]
+    let enriched = applyComputedColumns(
+      rows,
+      [{ name: 'diff', formula: 'a - b' }],
+      { a: '1e6', b: '1e6' },
+    )
+    enriched = applyComputedColumns(
+      enriched,
+      [{ name: 'doubled', formula: 'diff * 2' }],
+      {},
+    )
+    expect(enriched[0].diff).toBeCloseTo(3)
+    expect(enriched[0].doubled).toBeCloseTo(6)
+  })
+
+  it('different computed fields can apply different divisors to the same column', () => {
+    // field1: raw value of x (no divisor)
+    // field2: x scaled by ÷1e6
+    const rows = [{ x: '3000000' }]
+    let enriched = applyComputedColumns(rows, [{ name: 'raw_x', formula: 'x' }], {})
+    enriched = applyComputedColumns(enriched, [{ name: 'scaled_x', formula: 'x' }], { x: '1e6' })
+    expect(enriched[0].raw_x).toBe(3000000)
+    expect(enriched[0].scaled_x).toBeCloseTo(3)
+  })
+
+  it('division by zero produces null, not NaN or Infinity', () => {
+    const rows = [{ a: '10', b: '0' }]
+    const enriched = applyComputedColumns(rows, [{ name: 'ratio', formula: 'a / b' }], {})
+    expect(enriched[0].ratio).toBeNull()
+  })
+
+  it('null-producing formula does not break chained field that references it', () => {
+    // ratio is null (div by zero); product references ratio — should also be null (0 * something)
+    // applyComputedColumns treats null as 0 in scope, so product = 0 * 5 = 0, which is finite.
+    const rows = [{ a: '10', b: '0', c: '5' }]
+    let enriched = applyComputedColumns(rows, [{ name: 'ratio', formula: 'a / b' }], {})
+    enriched = applyComputedColumns(enriched, [{ name: 'product', formula: 'ratio * c' }], {})
+    expect(enriched[0].ratio).toBeNull()
+    expect(enriched[0].product).toBe(0) // null → 0 in scope, 0 * 5 = 0
+  })
+
+  it('enriched rows with no computed fields returns input unchanged', () => {
+    const rows = [{ x: '1', y: '2' }]
+    // Simulates the early-return branch: config.computedFields is empty
+    let enriched = rows
+    for (const cf of []) {
+      enriched = applyComputedColumns(enriched, [{ name: cf.label, formula: cf.formula }], cf.inputDivisors ?? {})
+    }
+    expect(enriched).toBe(rows) // strict reference equality — no copy made
+  })
+
+  it('invalid formula in chain produces null without throwing', () => {
+    // parseFormula guards against this in the UI, but test the underlying utility directly
+    const rows = [{ x: '5' }]
+    const enriched = applyComputedColumns(rows, [{ name: 'bad', formula: '' }], {})
+    expect(enriched[0].bad).toBeNull()
   })
 })

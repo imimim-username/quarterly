@@ -3,7 +3,7 @@ import React, {
 } from 'react'
 import * as echarts from 'echarts'
 import { createRun } from '../api/client.js'
-import { applyComputedColumns } from '../utils/computedColumns.js'
+import { applyComputedColumns, parseFormula, getFormulaVariables } from '../utils/computedColumns.js'
 import { applyTimestampExtraction } from '../utils/timestampExtraction.js'
 import ResultFilters from './ResultFilters.jsx'
 import {
@@ -219,6 +219,7 @@ export function defaultInstanceConfig() {
     seriesColors: {},
     colorSchemeId: null,
     activeFilters: {},
+    computedFields: [],
   }
 }
 
@@ -274,14 +275,29 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
   // ── Filtered rows for chart ──
   const filteredRows = useMemo(() => filterRows(previewRows, config.activeFilters), [previewRows, config.activeFilters])
 
+  // ── Enrich rows with computed Y-fields (per-field input divisors, then formula) ──
+  const enrichedRows = useMemo(() => {
+    if (!config.computedFields?.length) return filteredRows
+    let rows = filteredRows
+    for (const cf of config.computedFields) {
+      if (!cf.label || !parseFormula(cf.formula)) continue
+      rows = applyComputedColumns(
+        rows,
+        [{ name: cf.label, formula: cf.formula }],
+        cf.inputDivisors ?? {},
+      )
+    }
+    return rows
+  }, [filteredRows, config.computedFields])
+
   // ── Chart data ──
   const chartDataLeft = useMemo(() =>
-    buildChartData(filteredRows, config.xField, config.leftFields ?? [], config.colDivisors ?? {}, config.groupBy, config.leftYMode, config.leftAggregation, config.xSortDir),
-    [filteredRows, config.xField, config.leftFields, config.colDivisors, config.groupBy, config.leftYMode, config.leftAggregation, config.xSortDir]
+    buildChartData(enrichedRows, config.xField, config.leftFields ?? [], config.colDivisors ?? {}, config.groupBy, config.leftYMode, config.leftAggregation, config.xSortDir),
+    [enrichedRows, config.xField, config.leftFields, config.colDivisors, config.groupBy, config.leftYMode, config.leftAggregation, config.xSortDir]
   )
   const chartDataRight = useMemo(() =>
-    buildChartData(filteredRows, config.xField, config.rightFields ?? [], config.colDivisors ?? {}, config.groupBy, config.rightYMode, config.rightAggregation, config.xSortDir),
-    [filteredRows, config.xField, config.rightFields, config.colDivisors, config.groupBy, config.rightYMode, config.rightAggregation, config.xSortDir]
+    buildChartData(enrichedRows, config.xField, config.rightFields ?? [], config.colDivisors ?? {}, config.groupBy, config.rightYMode, config.rightAggregation, config.xSortDir),
+    [enrichedRows, config.xField, config.rightFields, config.colDivisors, config.groupBy, config.rightYMode, config.rightAggregation, config.xSortDir]
   )
 
   // Fields that appear on both axes need an alias on the right side so they
@@ -661,6 +677,19 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
                 onChange={v => patchConfig({ leftFields: v })}
                 colDivisors={config.colDivisors ?? {}}
                 onDivisorChange={d => patchConfig({ colDivisors: d })}
+                computedFields={config.computedFields ?? []}
+                onComputedChange={(cfs, extraPatch) => patchConfig({ computedFields: cfs, ...extraPatch })}
+                onComputedDelete={cfLabel => {
+                  const cur = configRef.current
+                  const newDivisors = { ...cur.colDivisors }
+                  delete newDivisors[cfLabel]
+                  patchConfig({
+                    computedFields: (cur.computedFields ?? []).filter(cf => cf.label !== cfLabel),
+                    leftFields: (cur.leftFields ?? []).filter(f => f !== cfLabel),
+                    rightFields: (cur.rightFields ?? []).filter(f => f !== cfLabel),
+                    colDivisors: newDivisors,
+                  })
+                }}
               />
               <FieldPicker
                 label="Right Y Fields"
@@ -670,6 +699,19 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
                 onChange={v => patchConfig({ rightFields: v })}
                 colDivisors={config.colDivisors ?? {}}
                 onDivisorChange={d => patchConfig({ colDivisors: d })}
+                computedFields={config.computedFields ?? []}
+                onComputedChange={(cfs, extraPatch) => patchConfig({ computedFields: cfs, ...extraPatch })}
+                onComputedDelete={cfLabel => {
+                  const cur = configRef.current
+                  const newDivisors = { ...cur.colDivisors }
+                  delete newDivisors[cfLabel]
+                  patchConfig({
+                    computedFields: (cur.computedFields ?? []).filter(cf => cf.label !== cfLabel),
+                    leftFields: (cur.leftFields ?? []).filter(f => f !== cfLabel),
+                    rightFields: (cur.rightFields ?? []).filter(f => f !== cfLabel),
+                    colDivisors: newDivisors,
+                  })
+                }}
               />
             </div>
           )}
@@ -742,7 +784,16 @@ const ReportInstanceCard = forwardRef(function ReportInstanceCard(
 
 // ─── FieldPicker ─────────────────────────────────────────────────────────────
 
-function FieldPicker({ label, selected, allColumns, exclude, onChange, colDivisors, onDivisorChange }) {
+const EMPTY_CF = { id: null, label: '', formula: '', inputDivisors: {} }
+
+function FieldPicker({
+  label, selected, allColumns, exclude, onChange,
+  colDivisors, onDivisorChange,
+  computedFields = [], onComputedChange, onComputedDelete,
+}) {
+  const [editingCF, setEditingCF] = useState(null) // null=closed | object=open form
+  const [cfLabelError, setCFLabelError] = useState('')
+
   const available = allColumns.filter(c => !exclude.includes(c))
 
   const toggle = (col) => {
@@ -757,29 +808,206 @@ function FieldPicker({ label, selected, allColumns, exclude, onChange, colDiviso
     onDivisorChange({ ...colDivisors, [col]: next })
   }
 
+  // ── Computed field form handlers ──
+
+  const openNew = (e) => { e.stopPropagation(); setCFLabelError(''); setEditingCF({ ...EMPTY_CF }) }
+  const openEdit = (e, cf) => { e.stopPropagation(); setCFLabelError(''); setEditingCF({ ...cf }) }
+
+  const saveCF = () => {
+    if (!editingCF) return
+    const { id, label: cfLabel, formula, inputDivisors } = editingCF
+    const trimmedLabel = cfLabel.trim()
+    if (!trimmedLabel || !parseFormula(formula)) return
+
+    // Validate: label must not collide with a raw column
+    if (allColumns.includes(trimmedLabel)) {
+      setCFLabelError(`"${trimmedLabel}" is already a query column`)
+      return
+    }
+    // Validate: label must not duplicate another computed field (excluding self when editing)
+    if (computedFields.some(cf => cf.label === trimmedLabel && cf.id !== id)) {
+      setCFLabelError(`"${trimmedLabel}" is already used by another computed field`)
+      return
+    }
+
+    setCFLabelError('')
+
+    if (id === null) {
+      // New computed field — label is set once and immutable thereafter
+      const newCF = { id: `${Date.now()}_${Math.random().toString(36).slice(2,7)}`, label: trimmedLabel, formula, inputDivisors }
+      onComputedChange([...computedFields, newCF], {})
+    } else {
+      // Edit existing — label is immutable, only formula and inputDivisors can change
+      const updated = computedFields.map(cf => cf.id === id ? { ...cf, formula, inputDivisors } : cf)
+      onComputedChange(updated, {})
+    }
+    setEditingCF(null)
+  }
+
+  const deleteCF = (e, cf) => {
+    e.stopPropagation()
+    // Deletion is handled atomically at the parent level (cleans up both leftFields
+    // and rightFields in a single patchConfig call, avoiding stale-state issues).
+    onComputedDelete(cf.label)
+    if (editingCF?.id === cf.id) setEditingCF(null)
+  }
+
+  const updateEditingInputDivisor = (col) => {
+    const cur = editingCF.inputDivisors?.[col] || 'raw'
+    const next = DIVISOR_CYCLE[(DIVISOR_CYCLE.indexOf(cur)+1) % DIVISOR_CYCLE.length]
+    setEditingCF(prev => ({ ...prev, inputDivisors: { ...prev.inputDivisors, [col]: next } }))
+  }
+
+  const formulaVars = editingCF ? getFormulaVariables(editingCF.formula) : []
+  const formulaValid = editingCF ? !!parseFormula(editingCF.formula) : false
+
   return (
     <div className="form-group" style={{ margin:0 }}>
       <label style={{ fontSize:11 }}>{label}</label>
-      <div style={{ display:'flex', flexDirection:'column', gap:3, maxHeight:100, overflowY:'auto', border:'1px solid var(--color-border)', borderRadius:4, padding:'4px 6px' }}>
-        {available.map(col => (
-          <div key={col} style={{ display:'flex', alignItems:'center', gap:6 }}>
-            <input type="checkbox" id={`fp-${label}-${col}`} checked={selected.includes(col)} onChange={() => toggle(col)} />
-            <label htmlFor={`fp-${label}-${col}`} style={{ fontSize:11, cursor:'pointer', flex:1 }}>{col}</label>
-            {selected.includes(col) && (
+      <div style={{ display:'flex', flexDirection:'column', gap:3, border:'1px solid var(--color-border)', borderRadius:4, padding:'4px 6px' }}>
+
+        {/* Scrollable field list */}
+        <div style={{ display:'flex', flexDirection:'column', gap:3, maxHeight:120, overflowY:'auto' }}>
+          {/* Raw columns */}
+          {available.map(col => (
+            <div key={col} style={{ display:'flex', alignItems:'center', gap:6 }}>
+              <input type="checkbox" id={`fp-${label}-${col}`} checked={selected.includes(col)} onChange={() => toggle(col)} />
+              <label htmlFor={`fp-${label}-${col}`} style={{ fontSize:11, cursor:'pointer', flex:1 }}>{col}</label>
+              {selected.includes(col) && (
+                <button
+                  onClick={e => cycleDivisor(col, e)}
+                  title={`Divisor: ${DIVISOR_LABELS[colDivisors[col]||'raw']}`}
+                  style={{ fontSize:9, padding:'1px 4px', opacity:0.7 }}
+                >
+                  {DIVISOR_LABELS[colDivisors[col]||'raw']}
+                </button>
+              )}
+            </div>
+          ))}
+
+          {/* Computed fields */}
+          {computedFields.map(cf => (
+            <div key={cf.id} style={{ display:'flex', alignItems:'center', gap:6 }}>
+              <input type="checkbox" id={`fp-${label}-cf-${cf.id}`} checked={selected.includes(cf.label)} onChange={() => toggle(cf.label)} />
+              <label htmlFor={`fp-${label}-cf-${cf.id}`} style={{ fontSize:11, cursor:'pointer', flex:1, color:'var(--color-accent)', fontStyle:'italic' }}>
+                <span style={{ fontSize:9, opacity:0.7, marginRight:3 }}>ƒ</span>{cf.label}
+              </label>
+              {selected.includes(cf.label) && (
+                <button
+                  onClick={e => cycleDivisor(cf.label, e)}
+                  title={`Output divisor: ${DIVISOR_LABELS[colDivisors[cf.label]||'raw']}`}
+                  style={{ fontSize:9, padding:'1px 4px', opacity:0.7 }}
+                >
+                  {DIVISOR_LABELS[colDivisors[cf.label]||'raw']}
+                </button>
+              )}
               <button
-                onClick={e => cycleDivisor(col, e)}
-                title={`Divisor: ${DIVISOR_LABELS[colDivisors[col]||'raw']}`}
-                style={{ fontSize:9, padding:'1px 4px', opacity:0.7 }}
-              >
-                {DIVISOR_LABELS[colDivisors[col]||'raw']}
-              </button>
+                onClick={e => openEdit(e, cf)}
+                title="Edit computed field"
+                style={{ fontSize:9, padding:'1px 3px', opacity:0.6, background:'transparent', border:'none', color:'var(--color-text-muted)', cursor:'pointer' }}
+              >✎</button>
+              <button
+                onClick={e => deleteCF(e, cf)}
+                title="Delete computed field"
+                style={{ fontSize:9, padding:'1px 3px', opacity:0.6, background:'transparent', border:'none', color:'var(--color-error)', cursor:'pointer' }}
+              >✕</button>
+            </div>
+          ))}
+
+          {available.length === 0 && computedFields.length === 0 && (
+            <span style={{ fontSize:11, color:'var(--color-text-muted)' }}>
+              {allColumns.length === 0 ? 'Run preview first' : 'No available fields'}
+            </span>
+          )}
+        </div>
+
+        {/* Add computed field button */}
+        {editingCF === null && (
+          <button
+            onClick={openNew}
+            style={{ alignSelf:'flex-start', fontSize:10, padding:'2px 6px', marginTop:2, background:'transparent', border:'1px dashed var(--color-border)', color:'var(--color-text-muted)', cursor:'pointer', borderRadius:3 }}
+          >+ computed field</button>
+        )}
+
+        {/* Inline computed field form */}
+        {editingCF !== null && (
+          <div style={{ display:'flex', flexDirection:'column', gap:5, marginTop:4, padding:'6px 8px', background:'var(--color-surface2)', borderRadius:4, border:'1px solid var(--color-border)' }}>
+            <div style={{ fontSize:10, fontWeight:600, color:'var(--color-text-muted)', textTransform:'uppercase', letterSpacing:'0.05em' }}>
+              {editingCF.id === null ? 'New computed field' : 'Edit computed field'}
+            </div>
+
+            {/* Label — editable for new fields only; immutable when editing existing */}
+            <div style={{ display:'flex', flexDirection:'column', gap:2 }}>
+              <span style={{ fontSize:10, color:'var(--color-text-muted)' }}>
+                Label (column name){editingCF.id !== null && <span style={{ opacity:0.6 }}> — fixed after creation</span>}
+              </span>
+              <input
+                value={editingCF.label}
+                onChange={e => { if (editingCF.id === null) { setCFLabelError(''); setEditingCF(prev => ({ ...prev, label: e.target.value })) } }}
+                readOnly={editingCF.id !== null}
+                placeholder="e.g. ratio"
+                style={{ fontSize:11, padding:'3px 5px', opacity: editingCF.id !== null ? 0.6 : 1 }}
+                spellCheck={false}
+              />
+              {cfLabelError && <span style={{ fontSize:10, color:'var(--color-error)' }}>{cfLabelError}</span>}
+            </div>
+
+            {/* Formula */}
+            <div style={{ display:'flex', flexDirection:'column', gap:2 }}>
+              <span style={{ fontSize:10, color:'var(--color-text-muted)' }}>Formula</span>
+              <input
+                value={editingCF.formula}
+                onChange={e => setEditingCF(prev => ({ ...prev, formula: e.target.value }))}
+                placeholder="e.g. totalAssets / totalSupply"
+                style={{
+                  fontSize:11, padding:'3px 5px',
+                  borderColor: editingCF.formula && !formulaValid ? 'var(--color-error)' : undefined,
+                }}
+                spellCheck={false}
+              />
+              {editingCF.formula && !formulaValid && (
+                <span style={{ fontSize:10, color:'var(--color-error)' }}>Invalid formula</span>
+              )}
+            </div>
+
+            {/* Per-input divisors */}
+            {formulaValid && formulaVars.length > 0 && (
+              <div style={{ display:'flex', flexDirection:'column', gap:3 }}>
+                <span style={{ fontSize:10, color:'var(--color-text-muted)' }}>Input divisors</span>
+                {formulaVars.map(varName => {
+                  const knownCol = allColumns.includes(varName)
+                  const curDivisor = editingCF.inputDivisors?.[varName] || 'raw'
+                  return (
+                    <div key={varName} style={{ display:'flex', alignItems:'center', gap:6 }}>
+                      <span style={{ fontSize:11, flex:1, color: knownCol ? 'var(--color-text)' : 'var(--color-text-muted)', fontStyle: knownCol ? 'normal' : 'italic' }}>
+                        {varName}{!knownCol && ' (unknown)'}
+                      </span>
+                      <button
+                        onClick={() => updateEditingInputDivisor(varName)}
+                        title={`Input divisor for ${varName}`}
+                        style={{ fontSize:9, padding:'1px 4px', opacity:0.8 }}
+                      >
+                        {DIVISOR_LABELS[curDivisor]}
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
             )}
+
+            {/* Save / Cancel */}
+            <div style={{ display:'flex', gap:6, marginTop:2 }}>
+              <button
+                onClick={saveCF}
+                disabled={!editingCF.label.trim() || !formulaValid}
+                style={{ fontSize:11, padding:'3px 10px', background:'var(--color-accent)', border:'none' }}
+              >Save</button>
+              <button
+                onClick={() => setEditingCF(null)}
+                style={{ fontSize:11, padding:'3px 10px', background:'transparent', border:'1px solid var(--color-border)', color:'var(--color-text-muted)', cursor:'pointer' }}
+              >Cancel</button>
+            </div>
           </div>
-        ))}
-        {available.length === 0 && (
-          <span style={{ fontSize:11, color:'var(--color-text-muted)' }}>
-            {allColumns.length === 0 ? 'Run preview first' : 'No available fields'}
-          </span>
         )}
       </div>
     </div>
