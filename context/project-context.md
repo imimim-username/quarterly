@@ -118,7 +118,7 @@ quarterly/                          npm workspace root
 │       │       ├── chartDataUtils.test.js    (56 tests)
 │       │       └── zipBuilder.test.js        (17 tests — CRC-32 vectors + ZIP structural correctness)
 │       └── components/             27 components (see §10)
-│           ├── __tests__/          16 Vitest test files (incl. FilenameModal.test.jsx)
+│           ├── __tests__/          17 Vitest test files (incl. FilenameModal.test.jsx)
 │           └── ...
 └── queries/
     └── builtin/
@@ -341,6 +341,9 @@ CREATE TABLE report_instances (
   colDivisors: { [col]: 'raw'|'1e6'|'1e18'|'datetime' },
   seriesColors: { [col]: hex },   // per-series explicit overrides
   activeFilters: { [col]: string[] },
+  computedFields: [            // per-instance computed Y-fields (virtual chart-only series)
+    { id: string, name: string, formula: string }
+  ],
 }
 ```
 
@@ -814,9 +817,27 @@ Returns a bundle object (not a file — frontend triggers download via Blob):
   "appVersion": "1.0.0",           // from backend/package.json version
   "queries": [ ...full query objects with parsed JSON fields... ],
   "addressLabels": [ { "address", "chain", "name", "notes" } ],
-  "settings": { "endpoint": "...", "warn_bytes": "..." }
+  "settings": { "endpoint": "...", "warn_bytes": "..." },
+  "reports": [
+    {
+      "name": "Q1 2026",
+      "description": "",
+      "config": { "theme": { "palette": [...], "bg": "#1a1f2e", ... } },  // null if no theme saved
+      "instances": [
+        {
+          "query_id": 3,           // numeric ID in source system
+          "query_name": "MYT Deposits",  // name for cross-system remapping on import
+          "position": 0,
+          "label": "Mainnet",
+          "config": { ...full instance chart config... }
+        }
+      ]
+    }
+  ]
 }
 ```
+
+Reports are always included in the bundle (the export UI shows a disabled/checked "Reports (always included)" checkbox).
 
 Settings exported: `endpoint`, `page_size`, `max_page_count`, `max_row_count`, `timeout_per_page_ms`, `warn_bytes`, `max_bytes`.
 
@@ -836,7 +857,10 @@ Returns:
   "settings": {
     "incoming": { "endpoint": "..." },
     "current":  { "endpoint": "..." }
-  }
+  },
+  "reports": [
+    { "name": "Q1 2026", "instanceCount": 4, "status": "new"|"conflict" }
+  ]
 }
 ```
 
@@ -859,7 +883,10 @@ Body:
     "addressLabels": [
       { "address": "0x...", "chain": "mainnet", "action": "overwrite"|"skip" }
     ],
-    "settings": ["endpoint", "warn_bytes"]
+    "settings": ["endpoint", "warn_bytes"],
+    "reports": [
+      { "name": "Q1 2026", "action": "overwrite"|"create_new"|"skip" }
+    ]
   }
 }
 ```
@@ -886,9 +913,15 @@ Field group mappings for query overwrite:
 
 `create_new`: inserts with name suffixed `" (imported)"`, increments to `" (imported 2)"` etc. until no conflict.
 
+**Report import behaviour:**
+- `overwrite`: updates `name`, `description`; deletes all existing instances; re-inserts from bundle.
+- `create_new`: inserts with name suffixed `" (imported)"` if a conflict exists.
+- **Report-level `config` (theme):** if the bundle report has `config != null`, an `UPDATE reports SET config=?` is performed after the row is created/updated, restoring the theme.
+- **Instance query-id remapping:** before inserting instances, the backend builds a `name→localId` map from all current queries (including any just imported). For each instance, if `query_name` is present in the bundle and matches a local query by name, that local ID is used. Falls back to the numeric `query_id` for same-system / older bundles that lack `query_name`. Instances whose query cannot be resolved are silently skipped.
+
 All operations in a single `db.transaction()`.
 
-Returns: `{ queries: [{name, action, id}], addressLabels: [{address, chain, action}], settings: [key] }`
+Returns: `{ queries: [{name, action, id}], addressLabels: [{address, chain, action}], settings: [key], reports: [name] }`
 
 ---
 
@@ -1448,37 +1481,60 @@ Matches rows by `keyField`. For each numeric column, shows `valueA`, `valueB`, `
 - `generating` — bool, true while PNG generation loop is running
 - `genStatus` — string progress message shown during generation (e.g. "3 / 12: chart name ✓")
 - `themeEditorOpen` — bool, toggle for `ReportThemeEditor` panel
-- `filenamePrompt` — `{ proposed: string, resolve: fn } | null` — when non-null the `FilenameModal` is shown; `resolve(name)` continues the loop, `resolve(null)` cancels it
+- `showExportModal` — bool, controls visibility of `PngExportModal`
 
 **Behaviour:**
 - Uses `cardRefs` (`useRef({})`) to store `useImperativeHandle` refs keyed by `instance._tempId`. Each ref exposes a `generate()` method.
 - Floating **Save** FAB (bottom-right) calls `handleSave`, which calls `createReport`/`updateReport` then `bulkSaveReportInstances`. Passed `config: { theme: reportTheme }` in both create and update.
-- **Generate PNGs** button calls `handleGenerate`:
-  1. Calls `pickDirectory()` — attempts `window.showDirectoryPicker({ mode: 'readwrite' })`. Returns `{ dirHandle, cancelled, error }`. If cancelled (user dismissed dialog), aborts. If API unavailable/blocked, `dirHandle` is null and `error` is set (silently falls through to ZIP).
-  2. Fires `void runGenerateLoop(dirHandle, snap, promptFilename)` — **fire-and-forget** so the UI stays fully interactive during generation.
-  3. `runGenerateLoop` iterates the snapshot. For each card, calls `await cardRef.generate()` to get `{ dataUrl, filename }`, then calls `await promptFilename(filename)` which shows the `FilenameModal` and awaits user input. If the user clicks **Save**, the modal resolves with the chosen name (`.png` appended if missing) and the loop continues. If the user clicks **Cancel all** or the toolbar Cancel fires, the modal resolves with `null` and the loop aborts.
-  4. After resolving the filename, writes the PNG: if `dirHandle` is set → `writePngToDir(dirHandle, chosenName, dataUrl)`; otherwise pushes to `pngs[]` for ZIP.
-  5. A **Cancel** button sets `cancelRef.current = true` and, if the filename modal is open, immediately resolves the pending promise with `null` (via `handleCancelGenerate`).
-- `cancelRef` — `useRef(false)`, checked each iteration of `runGenerateLoop`. Set by the Cancel button.
-- `promptFilename(proposed)` — `useCallback` returning a `new Promise(resolve => setFilenamePrompt({ proposed, resolve }))`. Stable dep-array `[]` (passed as a parameter to `runGenerateLoop` to avoid closure issues).
-- `handleCancelGenerate` — sets `cancelRef.current = true`, updates `genStatus` with "(cancelling…)", and if `filenamePrompt` is non-null immediately calls `resolve(null)` and clears state.
+- **Generate PNGs** button calls `handleGenerate`, which simply sets `showExportModal = true`. The `PngExportModal` opens and lets the user confirm selections before any folder picker or generation begins.
+- `handleExportConfirm(selectedItems)` is called when the user clicks OK in the modal:
+  1. Sets `showExportModal = false` (synchronous).
+  2. Calls `await pickDirectory()` — attempts `window.showDirectoryPicker({ mode: 'readwrite' })`. Returns `{ dirHandle, cancelled, error }`. If cancelled, aborts. If API unavailable/blocked, `dirHandle` is null (ZIP fallback).
+  3. Sets `generating = true`, `cancelRef.current = false`, fires `void runGenerateLoop(dirHandle, selectedItems)` — **fire-and-forget**.
+  4. `runGenerateLoop` iterates `selectedItems` (only the checked ones, with pre-confirmed filenames). For each item: checks `cancelRef.current`, updates `genStatus`, calls `await cardRef.generate()` → `{ dataUrl }`, then writes the PNG using `item.filename` directly (no per-PNG modal). After the loop: folder mode shows saved count; ZIP mode calls `downloadAsZip(pngs)`.
+- `cancelRef` — `useRef(false)`, checked each iteration of `runGenerateLoop`. Set by the Cancel button (`handleCancelGenerate`).
+- `handleCancelGenerate` — sets `cancelRef.current = true`, updates `genStatus` with "(cancelling…)".
 - Each card receives an `onClone` prop — ⧉ Clone button on the Run Preview row (flush right via `marginLeft: 'auto'`). `cloneInstance(tempId)` inserts a copy immediately after the original with label `"${label} (copy)"`.
 - `handleSave` does NOT trigger a reload/remount — it calls `onSave(saved)` which only updates the report reference in `ReportsPanel` (no `setLoading`).
 - `ReportThemeEditor` is rendered as a collapsible panel above the instances list.
 - Each `ReportInstanceCard` receives `reportTheme`, `startDate`, `endDate`, `addressLabels`.
 - Color scheme selector: selects from `colorSchemes` prop; applying a scheme sets `reportTheme.palette` to the scheme's colors (merged via `normaliseTheme`).
+- `showExportModal` is reset to `false` in the `useEffect` keyed on `report?.id` so a stale modal never shows for a newly selected report.
 
-**`FilenameModal` component** (defined in `ReportBuilder.jsx`):
+**`PngExportModal` component** (defined in `ReportBuilder.jsx`):
 
 ```jsx
-function FilenameModal({ proposed, onSave, onCancel }) { ... }
+function PngExportModal({ instances, startDate, endDate, onConfirm, onCancel }) { ... }
 ```
 
-- Pre-fills input with `proposed` filename and auto-selects text on mount
-- **Save** button (disabled when trimmed value is empty) calls `onSave(withExt)` where `withExt` appends `.png` if the name doesn't already end with `.png` (case-insensitive)
-- **Cancel all** button calls `onCancel()`
-- Enter key → Save; Escape key → Cancel; backdrop click (only on the overlay itself, not the card) → Cancel
-- Rendered at `zIndex: 2000` as a fixed full-screen overlay with `backdropFilter: blur(2px)`
+Pre-generation modal that collects user selections before any folder picker or PNG generation runs. Initialised with one item per instance via `useState(() => instances.map(...))`.
+
+- **Per-item row:** checkbox (checked by default), editable filename `<input>`, and the instance label as a hint.
+- Default filename: `buildDefaultFilename(label, startDate, endDate)` — `${safeName}_${YYYY-MM-DD}_to_${YYYY-MM-DD}.png`. `safeName` strips `\/:*?"<>|` and collapses multiple underscores.
+- **Select All / Select None** buttons toggle all checkboxes.
+- **Duplicate filename warning:** counts filenames across checked items only; any filename that appears more than once is highlighted red. Duplicate detection is derived (no extra state).
+- **`.png` extension enforcement** applied at confirm time: if the entered name does not end with `.png` (case-insensitive), `.png` is appended.
+- **Escape key / backdrop click** dismisses modal (calls `onCancel`). The backdrop div is auto-focused on mount (`useRef` + `useEffect(() => ref.focus(), [])`) so Escape works immediately without a prior click.
+- `onConfirm(selectedItems)` called with `[{ tempId, filename, label }]` for checked items only.
+- `onCancel()` called on Escape / backdrop click / Cancel button.
+
+**`buildDefaultFilename(label, startDate, endDate)` (module-level helper):**
+```js
+function buildDefaultFilename(label, startDate, endDate) {
+  const safe = (label || 'chart')
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/_+/g, '_')
+    .trim()
+  const toYMD = d => {
+    if (!d) return null
+    if (d instanceof Date) return d.toISOString().slice(0, 10)
+    return String(d).slice(0, 10)
+  }
+  const s = toYMD(startDate) ?? 'start'
+  const e = toYMD(endDate)   ?? 'end'
+  return `${safe}_${s}_to_${e}.png`
+}
+```
 
 **`pickDirectory()` (module-level):**
 ```js
@@ -1911,22 +1967,21 @@ The Reports tab uses an **instance-based architecture** where each chart in a re
 
 The critical design constraint: `ReportBuilder` must NOT be unmounted between save and PNG generation, because all `cardRefs` are cleared on unmount. `ReportsPanel.handleSave` therefore avoids any state changes that would cause a loading→remount cycle.
 
-**Generate PNGs flow (`ReportBuilder.handleGenerate` + `runGenerateLoop`):**
-1. `handleGenerate` calls `pickDirectory()` — tries `window.showDirectoryPicker`. Returns `{ dirHandle, cancelled, error }`.
-2. If user cancelled the picker, returns immediately (no generation).
-3. Snapshots `instances` array, sets `generating = true`, fires `void runGenerateLoop(dirHandle, snap, promptFilename)` and returns. The UI remains fully interactive.
-4. `runGenerateLoop` iterates the snapshot. For each card:
-   - Checks `cancelRef.current`; breaks loop if true
-   - Updates `genStatus` with progress (e.g. `"3 / 12: My Chart"`)
-   - Calls `await cardRef.generate()` — expands the card, runs preview if needed, returns `{ dataUrl, filename }`
-   - Shows the **FilenameModal** via `await promptFilenameArg(filename)`:
-     - User edits the name and clicks **Save** → resolves with the chosen name (`.png` suffix enforced) → loop continues
-     - User clicks **Cancel all** or toolbar Cancel fires → resolves with `null` → sets `cancelled = true`, breaks loop
-   - Writes the PNG using the chosen filename: `writePngToDir(dirHandle, chosenName, dataUrl)` if folder mode; otherwise pushes to `pngs[]`
-5. After the loop: if folder mode, shows saved count. If ZIP mode, calls `downloadAsZip(pngs)` → one ZIP dialog.
-6. Sets `generating = false`, clears `filenamePrompt` state.
+**Generate PNGs flow (`ReportBuilder.handleGenerate` + `PngExportModal` + `runGenerateLoop`):**
+1. `handleGenerate` sets `showExportModal = true` — opens `PngExportModal`. No folder picker yet.
+2. User reviews the list of charts with pre-filled filenames, selects/deselects charts, edits names, resolves any duplicate warnings, then clicks **OK**.
+3. `handleExportConfirm(selectedItems)` fires: sets `showExportModal = false` (synchronous), then calls `await pickDirectory()` — tries `window.showDirectoryPicker`. Returns `{ dirHandle, cancelled, error }`. The `showDirectoryPicker()` call is synchronous within `pickDirectory()`, preserving the user-gesture activation from the OK button click.
+4. If user cancelled the picker, returns immediately (no generation). If API unavailable/blocked, `dirHandle` is null (ZIP fallback).
+5. Sets `generating = true`, `cancelRef.current = false`, fires `void runGenerateLoop(dirHandle, selectedItems)` — **fire-and-forget**. The UI stays fully interactive.
+6. `runGenerateLoop` iterates `selectedItems` (checked items with pre-confirmed filenames). For each:
+   - Checks `cancelRef.current`; breaks if true
+   - Updates `genStatus` with progress (e.g. `"3 / 8: My Chart"`)
+   - Calls `await cardRef.generate()` — expands the card, runs preview if needed, returns `{ dataUrl }`
+   - Writes the PNG using `item.filename` directly (no per-PNG modal): `writePngToDir(dirHandle, item.filename, dataUrl)` if folder mode; otherwise pushes to `pngs[]`
+7. After the loop: if folder mode, shows saved count. If ZIP mode, calls `downloadAsZip(pngs)` → one ZIP dialog.
+8. Sets `generating = false`.
 
-**Cancel button (`handleCancelGenerate`):** sets `cancelRef.current = true`. If `filenamePrompt` is currently non-null (modal is open), immediately calls its `resolve(null)` and clears `filenamePrompt` — this unblocks the awaiting loop so it can exit cleanly. Status shows "(cancelling…)".
+**Cancel button (`handleCancelGenerate`):** sets `cancelRef.current = true`. Status shows "(cancelling…)". The loop checks `cancelRef.current` at the top of each iteration and exits cleanly.
 
 **Why cards start collapsed:** saved instances (`instance.id` exists) initialize `expanded = false`. A collapsed card has `MiniChart` unmounted → `chartInstanceRef.current = null` → `getDataURL` cannot be called. The `generate()` method calls `setExpanded(true)` first, then polls until `chartInstanceRef.current` is non-null (up to 5 s).
 
@@ -2131,7 +2186,7 @@ Run: `npm test --workspace=frontend`
 
 Config: `vitest.config.js` with `environment: 'jsdom'`, `setupFiles: ['@testing-library/jest-dom/vitest']`.
 
-**17 test files, 344 tests total (as of 2026-08-24):**
+**17 test files, 385 tests total (as of 2026-08-25):**
 
 | File | Tests | Coverage |
 |---|---|---|
@@ -2140,7 +2195,7 @@ Config: `vitest.config.js` with `environment: 'jsdom'`, `setupFiles: ['@testing-
 | `components/__tests__/ColorSchemeManager.test.jsx` | 32 | List rendering (swatches, default badge), set default, delete, create, edit (name/colors/theme), "Override chart appearance" checkbox behavior (opt-in, pre-checked for themed schemes, hides/shows pickers), save with and without theme, update scheme with and without theme |
 | `components/__tests__/ResultsView.test.jsx` | 22 | Renders table by default, chart tab switch (Chart button), `display:none` toggling (both children always mounted), props flow through (divisors, filters, save view), color scheme props forwarded to ResultsChart |
 | `components/__tests__/MultiQueryChart.test.jsx` | 25 | Initial render, query loading, add/remove datasets, run datasets (createRun args with start_date/end_date), auto-xField, series add/remove, chart controls, Run All, dataset config selectors. Mocks: `vi.mock('../../api/client.js')`, `vi.mock('echarts')`, `global.ResizeObserver` stub |
-| `components/__tests__/FilenameModal.test.jsx` | 13 | Modal appearance with pre-fill, Save disabled/enabled, Save/Enter/Escape/Cancel all/backdrop click, `.png` appended when missing, `.png` not double-appended, case-insensitive `.PNG` check, toolbar Cancel dismisses modal, cancelling status message. Mocks: `api/client.js`, `ReportThemeEditor.jsx`, `ReportInstanceCard.jsx` (exposes `generate()` via `useImperativeHandle`), `zipBuilder.js` |
+| `components/__tests__/FilenameModal.test.jsx` | 30 | Original 13 tests for `ReportBuilder` integration: toolbar cancel, cancelling status, modal appearance, Save disabled/enabled, Save/Enter/Escape/Cancel all/backdrop click. Plus 17 new tests: `buildDefaultFilename` (date formatting, label sanitisation, fallbacks), `.png` extension enforcement on OK (missing extension appended, `.png` not doubled, `.PNG` case-insensitive), `PngExportModal` (select-all/none, per-item toggle, conflict detection highlights duplicates among checked items only, Escape works immediately on open). Mocks: `api/client.js`, `ReportThemeEditor.jsx`, `ReportInstanceCard.jsx` (exposes `generate()` via `useImperativeHandle`), `zipBuilder.js` |
 | `utils/__tests__/computedColumns.test.js` | 115 | `parseFormula` (valid/invalid/empty), `applyComputedColumns` (no defs, arithmetic, divisors, zero, chaining, invalid formula, div-by-zero, prototype blocking), `computedFieldMeta`, custom parser operators |
 | `utils/__tests__/timestampExtraction.test.js` | 25 | `applyTimestampExtraction` (null config, before/after position, missing field, delimiter variants), `timestampExtractionMeta` |
 | `utils/__tests__/mergeDatasets.test.js` | 38 | Guard cases, aggregation (sum/avg/min/max/count/median), groupBy (day/week/month), cumulative, divisors, two-dataset union join, same-column collision prevention, type-compatible X alignment, three datasets, formatXLabel |
@@ -2153,7 +2208,7 @@ Config: `vitest.config.js` with `environment: 'jsdom'`, `setupFiles: ['@testing-
 | `utils/__tests__/chartDataUtils.test.js` | 56 | `buildChartData` edge cases: bucket collapsing, cumulative across grouped data, divisors, aggregation modes, empty series |
 | `utils/__tests__/zipBuilder.test.js` | 17 | `crc32` standard vectors (empty, single byte, hello world, 0xFF run), `buildZipBytes` structural correctness (signatures, local/central headers, EOCD, entry counts, offsets, UTF-8 filenames, multi-file) |
 
-**Grand total: 591 tests (344 frontend Vitest + 240 backend Jest passing + 7 skipped)**
+**Grand total: 632 tests (385 frontend Vitest + 240 backend Jest passing + 7 skipped)**
 
 Backend test counts: 11 test files, 247 total (240 passing + 7 skipped integration tests gated by `process.env.INTEGRATION`). The 7 skipped tests in `runs.test.js` / `ponder.test.js` require a live Ponder endpoint.
 
@@ -2176,14 +2231,16 @@ vi.mock('../../utils/addressLabels.js', () => ({
 
 **Key `computedColumns.test.js` note:** The custom parser supports unary minus and the `^` exponentiation operator. Tests use `'(a + b'` (unclosed paren) as the canonical invalid-syntax case. Prototype property access (e.g., `__proto__`) is blocked and results in `null`. The test suite has 115 tests covering all parser operators, edge cases, chaining, and security guards.
 
-**`FilenameModal.test.jsx` helpers:** the modal is nested inside `ReportBuilder` with multiple other inputs, so tests use DOM selectors rather than generic `getByRole`:
+**`FilenameModal.test.jsx` helpers:** tests are split between `ReportBuilder` integration tests (for the old toolbar/cancel/status flow) and standalone `PngExportModal` / `buildDefaultFilename` tests that render the modal in isolation. Common helpers:
 ```js
+// For ReportBuilder integration tests (pre-export-modal flow)
 function getModalCard() { return document.querySelector('[style*="border-radius: 10px"]') }
-function getModalInput() { return document.querySelector('input[spellcheck="false"]') }
-function getModalSaveBtn() { return within(getModalCard()).getByRole('button', { name: 'Save' }) }
-function getModalCancelBtn() { return within(getModalCard()).getByRole('button', { name: 'Cancel all' }) }
+// For PngExportModal standalone tests
+function renderModal(overrides = {}) {
+  return render(<PngExportModal instances={[...]} startDate={...} endDate={...} onConfirm={vi.fn()} onCancel={vi.fn()} {...overrides} />)
+}
 ```
-The backdrop-click test requires `Object.defineProperty` on the event's `target`/`currentTarget` because jsdom does not propagate those naturally on `fireEvent.click(overlay)`.
+The `PngExportModal` backdrop is auto-focused on mount, so Escape key tests work via `fireEvent.keyDown(backdrop, { key: 'Escape' })` without any prior click.
 
 **Promise stored in React state:** `setFilenamePrompt({ proposed, resolve })` stores the Promise resolver function as a property of a plain object — not as a top-level function argument to `setState`, so React never treats it as an updater function. This is safe.
 

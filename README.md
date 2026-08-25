@@ -21,9 +21,9 @@ You paste a Ponder endpoint URL into the app, pick a date range, and run named q
 - **Stats bar** — pick any numeric column and instantly see sum, average, min, and max. Divisors (÷1e6 / ÷1e18) applied to the table are also applied to the stats so the numbers always match.
 - **Filter chips** — click any column value in the results to add it as a filter chip. Address columns resolve to human-readable labels from the Address Book.
 - **Address Book** — label blockchain addresses with human-readable names, optionally scoped to a specific chain. Labels appear in result tables (click a labeled cell to copy the raw address) and in filter chips.
-- **Reports** — group queries into named reports. Run all queries in a report with a shared date range in one click. Compare two report executions side by side. Download a ZIP of all result CSVs.
+- **Reports** — group queries into named reports. Each chart instance has its own chart config (axes, chart type, filters) and can define computed Y-fields: virtual series built from arithmetic formulas referencing other fields, evaluated at chart render time. Run all queries in a report with a shared date range in one click. Compare two report executions side by side. Download a ZIP of all result CSVs.
 - **Endpoint profiles** — save multiple endpoint URLs (with optional custom headers) and switch between them in one click. Useful when working across staging and production environments or multiple chains.
-- **Import / Export** — export any selection of queries, address book entries, and settings to a versioned JSON bundle. Import bundles on another instance with per-item conflict resolution (overwrite, create new, or skip) and field-level selection for query overwrites.
+- **Import / Export** — export any selection of queries, address book entries, and settings to a versioned JSON bundle. Reports (with their chart configs and theme) are always included. Import bundles on another instance with per-item conflict resolution (overwrite, create new, or skip) and field-level selection for query overwrites. Query IDs in report instances are remapped by query name on import so cross-system transfers work correctly.
 - **Export** — download any run as JSON or CSV. CSV export applies decimal scaling from field metadata. ZIP export bundles an entire report run.
 - **Query preview** — inspect the exact GraphQL query and variables that were sent to the endpoint, useful for debugging or copying requests to external tools.
 - **Schema explorer** — browse the live GraphQL schema and craft queries with embedded GraphiQL. Click **Use This Query** to populate the editor directly.
@@ -216,7 +216,7 @@ The Preview modal also shows ready-to-run code snippets in Python, curl, TypeScr
 Click the **Reports** tab to group queries into a named report. Click **+ New Report**, add queries, then click **Run Report** to execute all of them with the current date range.
 
 - Failures are recorded per query but don't stop the rest.
-- Click **Generate PNGs** to export every chart card to PNG. For each card a **filename modal** appears pre-filled with a suggested name — edit it, click **Save** to write the file and continue to the next card, or **Cancel all** to abort. Files go directly to a folder you choose (File System Access API), or into a single ZIP download if your browser does not support the folder picker.
+- Click **Generate PNGs** to open a pre-generation modal listing all chart cards with suggested filenames. Select which charts to export (Select All / Select None / individually), edit any filename, and click **OK**. Duplicate filename warnings highlight conflicts. Files go directly to a folder you choose (File System Access API), or into a single ZIP download if your browser does not support the folder picker.
 - Download a ZIP of all successful result CSVs.
 - Click **Compare** on two past report runs to see a side-by-side comparison across all queries.
 
@@ -325,7 +325,15 @@ Save the current chart configuration under a name with **Save view**. The view c
 
 ## Reports
 
-A **report** is a named group of queries. When you run a report:
+A **report** is a named group of query-chart instances. Each instance is independently configured with:
+
+- Which query to run
+- A label (shown on the chart card)
+- Full chart config: X axis, left/right Y axes, chart type, group-by, aggregation, filters, color overrides
+- **Computed Y-fields** — virtual chart series defined by arithmetic formulas referencing other fields (e.g. `totalDeposits / userCount`). Evaluated at chart render time; not stored in the database run result.
+- A shared report **theme** — palette, background color, text/grid/axis colors, font — applied to every chart in the report and to PNG exports.
+
+When you run a report:
 
 1. Each query executes sequentially (in position order) with the current global date range.
 2. Failures are recorded but don't stop the remaining queries.
@@ -395,9 +403,27 @@ The import runs in a single database transaction — all decisions are applied a
   "appVersion": "1.0.0",
   "queries": [ { "...all query fields..." } ],
   "addressLabels": [ { "address": "0x…", "chain": "mainnet", "name": "…", "notes": "…" } ],
-  "settings": { "endpoint": "…", "warn_bytes": "…" }
+  "settings": { "endpoint": "…", "warn_bytes": "…" },
+  "reports": [
+    {
+      "name": "Q1 2026",
+      "description": "",
+      "config": { "theme": { "palette": ["#e94560", ...], "bg": "#1a1f2e", ... } },
+      "instances": [
+        {
+          "query_id": 3,
+          "query_name": "MYT Deposits",
+          "position": 0,
+          "label": "Mainnet",
+          "config": { "xField": "timestamp", "leftFields": ["assets"], ... }
+        }
+      ]
+    }
+  ]
 }
 ```
+
+Reports are always included in a bundle. Each instance embeds `query_name` alongside `query_id` so the import correctly resolves queries by name even when the target instance has different numeric IDs.
 
 ---
 
