@@ -101,45 +101,98 @@ function downloadAsZip(pngs) {
 let tempIdCounter = 0
 function nextTempId() { return `tmp_${++tempIdCounter}` }
 
-// ─── FilenameModal ────────────────────────────────────────────────────────────
+// ─── Default filename builder ─────────────────────────────────────────────────
 
 /**
- * Shown once per PNG during "Generate PNGs".
- * `proposed` — pre-filled filename string
- * `onSave(name)` — called with the (possibly edited) filename; continues loop
- * `onCancel()` — called when user wants to abort the whole operation
+ * Build the default export filename for a chart instance.
+ * Format: [label]_YYYY-MM-DD_to_YYYY-MM-DD.png
+ * Characters invalid in filenames are replaced with underscores.
  */
-function FilenameModal({ proposed, onSave, onCancel }) {
-  const [value, setValue] = useState(proposed)
-  const inputRef = useRef(null)
+function buildDefaultFilename(label, startDate, endDate) {
+  const safe = (label || 'chart')
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/_+/g, '_')
+    .trim()
+  // Accept both Date objects and ISO strings
+  const toYMD = d => {
+    if (!d) return null
+    if (d instanceof Date) return d.toISOString().slice(0, 10)
+    return String(d).slice(0, 10)
+  }
+  const s = toYMD(startDate) ?? 'start'
+  const e = toYMD(endDate)   ?? 'end'
+  return `${safe}_${s}_to_${e}.png`
+}
 
-  useEffect(() => {
-    // Select all so the user can immediately start typing a replacement
-    inputRef.current?.select()
-  }, [])
+// ─── PngExportModal ───────────────────────────────────────────────────────────
 
-  // Always ensure the saved name ends with .png (case-insensitive).
-  // If the user deleted the extension we re-append it silently.
-  const commitSave = () => {
-    const trimmed = value.trim()
-    if (!trimmed) return
-    const withExt = trimmed.toLowerCase().endsWith('.png') ? trimmed : `${trimmed}.png`
-    onSave(withExt)
+/**
+ * Pre-generation modal shown when "Generate PNGs" is clicked.
+ * Lists all chart instances with editable filenames and checkboxes.
+ * Warns on duplicate filenames. Calls onConfirm with the selected items.
+ *
+ * Props:
+ *   instances  — current instances array
+ *   startDate  — ISO date string (master range start)
+ *   endDate    — ISO date string (master range end)
+ *   onConfirm([{ tempId, filename, label }]) — called on OK
+ *   onCancel() — called on Cancel / Escape / backdrop
+ */
+function PngExportModal({ instances, startDate, endDate, onConfirm, onCancel }) {
+  const [items, setItems] = useState(() =>
+    instances.map(inst => ({
+      tempId:   inst._tempId,
+      label:    inst.label || inst.query?.name || '(unlabeled)',
+      filename: buildDefaultFilename(
+        inst.label || inst.query?.name || 'chart',
+        startDate,
+        endDate,
+      ),
+      checked: true,
+    }))
+  )
+
+  // ── Conflict detection (derived — no extra state) ──
+  // Only count filenames for checked items: unchecked charts won't be generated,
+  // so their filenames don't participate in conflict detection.
+  const counts = {}
+  for (const it of items) {
+    if (!it.checked) continue
+    const k = it.filename.trim().toLowerCase()
+    counts[k] = (counts[k] || 0) + 1
+  }
+  const isConflict = it => it.checked && counts[it.filename.trim().toLowerCase()] > 1
+  const anyConflict = items.some(isConflict)
+
+  const setFilename = (tempId, value) =>
+    setItems(prev => prev.map(it => it.tempId === tempId ? { ...it, filename: value } : it))
+
+  const setChecked = (tempId, checked) =>
+    setItems(prev => prev.map(it => it.tempId === tempId ? { ...it, checked } : it))
+
+  const selectAll  = () => setItems(prev => prev.map(it => ({ ...it, checked: true  })))
+  const selectNone = () => setItems(prev => prev.map(it => ({ ...it, checked: false })))
+
+  const handleConfirm = () => {
+    onConfirm(
+      items
+        .filter(it => it.checked)
+        .map(it => ({
+          tempId:   it.tempId,
+          filename: it.filename.trim() || buildDefaultFilename(it.label, startDate, endDate),
+          label:    it.label,
+        }))
+    )
   }
 
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter') commitSave()
-    if (e.key === 'Escape') onCancel()
-  }
-
-  // Backdrop click = cancel (standard modal UX)
-  const handleBackdropClick = (e) => {
-    if (e.target === e.currentTarget) onCancel()
-  }
+  const handleKeyDown = e => { if (e.key === 'Escape') onCancel() }
+  const handleBackdrop = e => { if (e.target === e.currentTarget) onCancel() }
 
   return (
     <div
-      onClick={handleBackdropClick}
+      onClick={handleBackdrop}
+      onKeyDown={handleKeyDown}
+      tabIndex={-1}
       style={{
         position: 'fixed', inset: 0, zIndex: 2000,
         background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(2px)',
@@ -150,63 +203,98 @@ function FilenameModal({ proposed, onSave, onCancel }) {
         background: 'var(--color-surface)',
         border: '1px solid var(--color-border)',
         borderRadius: 10,
-        padding: '28px 32px',
-        minWidth: 440, maxWidth: 620,
+        padding: '24px 28px',
+        width: 660, maxWidth: '95vw', maxHeight: '80vh',
         boxShadow: '0 8px 40px rgba(0,0,0,0.6)',
-        display: 'flex', flexDirection: 'column', gap: 16,
+        display: 'flex', flexDirection: 'column', gap: 14,
       }}>
+        {/* Header */}
         <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--color-text)' }}>
-          💾 Name this PNG
+          ⬇ Export PNGs
         </div>
-        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.5 }}>
-          Edit the filename below, then click <strong>Save</strong> to write this file and
-          continue, or <strong>Cancel all</strong> to abort the whole operation.
+
+        {/* Select all / none */}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            onClick={selectAll}
+            style={{ fontSize: 12, padding: '3px 12px', background: 'var(--color-surface2)', border: '1px solid var(--color-border)', borderRadius: 4, cursor: 'pointer' }}
+          >Select all</button>
+          <button
+            onClick={selectNone}
+            style={{ fontSize: 12, padding: '3px 12px', background: 'var(--color-surface2)', border: '1px solid var(--color-border)', borderRadius: 4, cursor: 'pointer' }}
+          >Select none</button>
         </div>
-        <input
-          ref={inputRef}
-          value={value}
-          onChange={e => setValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-          spellCheck={false}
-          style={{
-            width: '100%', boxSizing: 'border-box',
-            padding: '9px 12px', fontSize: 13,
-            background: 'var(--color-surface2)',
-            color: 'var(--color-text)',
-            border: '1px solid var(--color-border)',
-            borderRadius: 6,
-            fontFamily: 'monospace',
-            letterSpacing: '0.01em',
-          }}
-        />
+
+        {/* Chart list */}
+        <div style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 7, flex: 1 }}>
+          {items.map(it => (
+            <div key={it.tempId} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <input
+                type="checkbox"
+                checked={it.checked}
+                onChange={e => setChecked(it.tempId, e.target.checked)}
+                style={{ flexShrink: 0, accentColor: 'var(--color-accent)', width: 15, height: 15 }}
+              />
+              <span
+                title={it.label}
+                style={{
+                  fontSize: 12, color: 'var(--color-text-muted)',
+                  width: 150, flexShrink: 0,
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}
+              >
+                {it.label}
+              </span>
+              <input
+                value={it.filename}
+                onChange={e => setFilename(it.tempId, e.target.value)}
+                spellCheck={false}
+                style={{
+                  flex: 1, boxSizing: 'border-box',
+                  padding: '5px 9px', fontSize: 12,
+                  background: 'var(--color-surface2)',
+                  color: 'var(--color-text)',
+                  border: `1px solid ${isConflict(it) ? 'var(--color-error)' : 'var(--color-border)'}`,
+                  borderRadius: 5,
+                  fontFamily: 'monospace',
+                  outline: isConflict(it) ? '1px solid var(--color-error)' : 'none',
+                }}
+              />
+            </div>
+          ))}
+        </div>
+
+        {/* Conflict warning */}
+        {anyConflict && (
+          <div style={{
+            fontSize: 12, color: 'var(--color-error)',
+            padding: '7px 10px',
+            background: 'rgba(220,50,50,0.1)',
+            borderRadius: 5, border: '1px solid var(--color-error)',
+          }}>
+            ⚠ Duplicate filenames — in folder mode, later files will overwrite earlier ones with the same name.
+          </div>
+        )}
+
+        {/* Footer */}
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
           <button
             onClick={onCancel}
             style={{
-              background: 'transparent',
-              border: '1px solid var(--color-error)',
-              color: 'var(--color-error)',
-              padding: '7px 20px', borderRadius: 6,
-              cursor: 'pointer', fontSize: 13,
+              background: 'transparent', border: '1px solid var(--color-border)',
+              color: 'var(--color-text)', padding: '7px 20px',
+              borderRadius: 6, cursor: 'pointer', fontSize: 13,
             }}
-          >
-            Cancel all
-          </button>
+          >Cancel</button>
           <button
-            onClick={commitSave}
-            disabled={!value.trim()}
+            onClick={handleConfirm}
             style={{
-              background: value.trim() ? '#2a6e2a' : 'var(--color-surface2)',
-              border: '1px solid #4caf50',
-              color: value.trim() ? '#fff' : 'var(--color-text-muted)',
-              padding: '7px 22px', borderRadius: 6,
-              cursor: value.trim() ? 'pointer' : 'default',
+              background: '#2a6e2a', border: '1px solid #4caf50',
+              color: '#fff', padding: '7px 26px',
+              borderRadius: 6, cursor: 'pointer',
               fontWeight: 600, fontSize: 13,
-              transition: 'background 0.15s, color 0.15s',
             }}
-          >
-            Save
-          </button>
+          >OK</button>
         </div>
       </div>
     </div>
@@ -237,25 +325,14 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
   const [error, setError] = useState('')
   const [showQueryPicker, setShowQueryPicker] = useState(false)
 
-  // Filename-prompt modal state — null when hidden, { proposed, resolve } when active
-  const [filenamePrompt, setFilenamePrompt] = useState(null)
+  // Export modal — shown before folder picker so user can select/rename charts
+  const [showExportModal, setShowExportModal] = useState(false)
 
   // Refs to each ReportInstanceCard (keyed by instance tempId)
   const cardRefs = useRef({})
 
   // Set to true by the Cancel button to break out of the generate loop
   const cancelRef = useRef(false)
-
-  /**
-   * Shows the filename modal pre-populated with `proposed`.
-   * Returns a Promise that resolves to the (possibly edited) filename string,
-   * or null if the user clicked "Cancel all".
-   */
-  const promptFilename = useCallback((proposed) => {
-    return new Promise((resolve) => {
-      setFilenamePrompt({ proposed, resolve })
-    })
-  }, [])
 
   useEffect(() => {
     listQueries().then(({ data }) => setAllQueries(Array.isArray(data) ? data : []))
@@ -414,41 +491,39 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
 
   // ── Generate PNGs ──
 
-  // Runs in the background after the directory is picked.
-  // Called with void so handleGenerate returns immediately and the UI stays live.
-  const runGenerateLoop = useCallback(async (dirHandle, snap, promptFilenameArg) => {
-    const pngs = []   // individual-download fallback
+  /**
+   * Runs in the background after the export modal is confirmed and the directory
+   * is picked. selectedItems = [{ tempId, filename, label }].
+   * Called with void so handleExportConfirm returns immediately and the UI stays live.
+   */
+  const runGenerateLoop = useCallback(async (dirHandle, selectedItems) => {
+    const pngs = []   // ZIP fallback accumulator
     let saved = 0
     let cancelled = false
 
-    for (let i = 0; i < snap.length; i++) {
+    for (let i = 0; i < selectedItems.length; i++) {
       if (cancelRef.current) { cancelled = true; break }
 
-      const inst = snap[i]
-      const cardRef = cardRefs.current[inst._tempId]
+      const { tempId, filename, label } = selectedItems[i]
+      const cardRef = cardRefs.current[tempId]
       if (!cardRef) continue
 
-      const label = inst.label || inst.query?.name || '…'
-      setGenStatus(`${i + 1} / ${snap.length}: ${label}`)
+      setGenStatus(`${i + 1} / ${selectedItems.length}: ${label}`)
 
       try {
-        const { dataUrl, filename } = await cardRef.generate()
+        const { dataUrl } = await cardRef.generate()
         if (!dataUrl) continue
 
-        // Ask the user to confirm / edit the filename before saving
-        const chosenName = await promptFilenameArg(filename)
-        if (chosenName === null) { cancelled = true; cancelRef.current = true; break }
-
         if (dirHandle) {
-          await writePngToDir(dirHandle, chosenName, dataUrl)
+          await writePngToDir(dirHandle, filename, dataUrl)
           saved++
-          setGenStatus(`${i + 1} / ${snap.length}: ${label} ✓  (${saved} saved)`)
+          setGenStatus(`${i + 1} / ${selectedItems.length}: ${label} ✓  (${saved} saved)`)
         } else {
-          pngs.push({ dataUrl, filename: chosenName })
-          setGenStatus(`${i + 1} / ${snap.length}: ${label} ✓`)
+          pngs.push({ dataUrl, filename })
+          setGenStatus(`${i + 1} / ${selectedItems.length}: ${label} ✓`)
         }
       } catch (e) {
-        console.error('Generate failed for instance', inst, e)
+        console.error('Generate failed for instance', tempId, e)
       }
     }
 
@@ -464,7 +539,7 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
         setGenerating(false)
         return
       }
-      setGenStatus(`Building ZIP…`)
+      setGenStatus('Building ZIP…')
       await downloadAsZip(pngs)
       setGenStatus(
         cancelled
@@ -476,39 +551,34 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
     setGenerating(false)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleGenerate = async () => {
+  /** Step 1: open the export modal. */
+  const handleGenerate = () => {
     if (instances.length === 0 || generating) return
+    setShowExportModal(true)
+  }
 
-    // showDirectoryPicker must be called in a user-gesture handler — do it here
-    // before yielding to React state updates.
-    const { dirHandle, cancelled, error: pickerError } = await pickDirectory()
+  /**
+   * Step 2: called when the user clicks OK in the export modal.
+   * showDirectoryPicker must be called from a user-gesture handler — this
+   * callback fires synchronously from a button onClick, so it qualifies.
+   */
+  const handleExportConfirm = async (selectedItems) => {
+    setShowExportModal(false)
+    if (!selectedItems.length) return
 
-    // User dismissed the picker — do nothing.
+    const { dirHandle, cancelled } = await pickDirectory()
     if (cancelled) return
-
-    // Picker unavailable or blocked — fall through silently to ZIP download.
-
-    // Snapshot the instance list so reorders/deletions mid-run don't affect the loop.
-    const snap = [...instances]
 
     cancelRef.current = false
     setGenerating(true)
     setGenStatus(dirHandle ? 'Saving to folder…' : 'Generating PNGs…')
 
-    // Fire and forget — the UI stays fully interactive while files save in the background.
-    void runGenerateLoop(dirHandle, snap, promptFilename)
+    void runGenerateLoop(dirHandle, selectedItems)
   }
 
   const handleCancelGenerate = () => {
     cancelRef.current = true
     setGenStatus(prev => prev + '  (cancelling…)')
-    // If a filename modal is currently open, dismiss it immediately so the
-    // loop is unblocked and can exit cleanly — otherwise the UI stays stuck.
-    if (filenamePrompt) {
-      const resolve = filenamePrompt.resolve
-      setFilenamePrompt(null)
-      resolve(null)
-    }
   }
 
   const isNew = !report?.id
@@ -665,20 +735,14 @@ export default function ReportBuilder({ report, startDate, endDate, addressLabel
         </div>
       ))}
 
-      {/* Filename-prompt modal — rendered during Generate PNGs */}
-      {filenamePrompt && (
-        <FilenameModal
-          proposed={filenamePrompt.proposed}
-          onSave={(chosenName) => {
-            const resolve = filenamePrompt.resolve
-            setFilenamePrompt(null)
-            resolve(chosenName)
-          }}
-          onCancel={() => {
-            const resolve = filenamePrompt.resolve
-            setFilenamePrompt(null)
-            resolve(null)
-          }}
+      {/* Export modal — shown before folder picker so user can select/rename charts */}
+      {showExportModal && (
+        <PngExportModal
+          instances={instances}
+          startDate={startDate}
+          endDate={endDate}
+          onConfirm={handleExportConfirm}
+          onCancel={() => setShowExportModal(false)}
         />
       )}
 

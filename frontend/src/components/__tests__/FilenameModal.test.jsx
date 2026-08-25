@@ -1,6 +1,13 @@
 /**
- * Tests for FilenameModal and its integration into the ReportBuilder
+ * Tests for PngExportModal and its integration into the ReportBuilder
  * generate-PNG flow.
+ *
+ * The new flow:
+ *   1. Click "⬇ Generate PNGs" → PngExportModal opens
+ *   2. User selects charts, edits filenames, resolves conflicts
+ *   3. Click OK → folder picker / ZIP generation proceeds
+ *
+ * These tests use the ZIP fallback (showDirectoryPicker absent) for simplicity.
  */
 
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
@@ -21,7 +28,6 @@ vi.mock('../ReportThemeEditor.jsx', () => ({
   default: () => <div data-testid="theme-editor" />,
 }))
 
-// Expose a `generate()` method via the forwarded ref.
 vi.mock('../ReportInstanceCard.jsx', () => {
   const React = require('react')
   const Comp = React.forwardRef(({ instance }, ref) => {
@@ -45,23 +51,26 @@ vi.mock('../../utils/zipBuilder.js', () => ({
 
 import ReportBuilder from '../ReportBuilder.jsx'
 
+function makeInstance(overrides = {}) {
+  return {
+    id: 10,
+    _tempId: 'tmp_test_1',
+    query_id: 1,
+    label: 'My Chart',
+    position: 0,
+    config: {},
+    query: { id: 1, name: 'My Query', category: 'Test' },
+    ...overrides,
+  }
+}
+
 function makeReport(overrides = {}) {
   return {
     id: 1,
     name: 'Test Report',
     description: '',
     config: {},
-    instances: [
-      {
-        id: 10,
-        _tempId: 'tmp_test_1',
-        query_id: 1,
-        label: 'My Chart',
-        position: 0,
-        config: {},
-        query: { id: 1, name: 'My Query', category: 'Test' },
-      },
-    ],
+    instances: [makeInstance()],
     ...overrides,
   }
 }
@@ -78,7 +87,6 @@ beforeEach(() => {
   delete window.showDirectoryPicker
   window.URL.createObjectURL = vi.fn(() => 'blob:test')
   window.URL.revokeObjectURL = vi.fn()
-  // Silence the anchor.click download trigger
   HTMLAnchorElement.prototype.click = vi.fn()
   vi.clearAllMocks()
 })
@@ -89,249 +97,361 @@ afterEach(() => {
 
 // ─── Selectors ────────────────────────────────────────────────────────────────
 
-/** The modal card div (child of backdrop). */
-function getModalCard() {
-  return document.querySelector('[style*="border-radius: 10px"]')
-}
-
-/** The modal's filename input specifically (has spellcheck=false). */
-function getModalInput() {
-  return document.querySelector('input[spellcheck="false"]')
-}
-
-/** Save button inside the modal card. */
-function getModalSaveBtn() {
-  const card = getModalCard()
-  return card ? within(card).getByRole('button', { name: 'Save' }) : null
-}
-
-/** Cancel all button inside the modal card. */
-function getModalCancelBtn() {
-  const card = getModalCard()
-  return card ? within(card).getByRole('button', { name: 'Cancel all' }) : null
-}
-
-/** Backdrop overlay div (position fixed, zIndex 2000). */
+/** Backdrop overlay (position fixed, zIndex 2000). */
 function getBackdrop() {
   return document.querySelector('[style*="z-index: 2000"]')
 }
 
-// ─── Modal appears and is pre-filled ─────────────────────────────────────────
+/** All spellcheck-false inputs (the filename text boxes in the modal). */
+function getFilenameInputs() {
+  return [...document.querySelectorAll('input[spellcheck="false"]')]
+}
 
-describe('FilenameModal — rendered via generate flow', () => {
-  it('appears after generate starts with the proposed filename pre-filled', async () => {
+/** All checkboxes inside the modal list. */
+function getModalCheckboxes() {
+  const backdrop = getBackdrop()
+  if (!backdrop) return []
+  return [...backdrop.querySelectorAll('input[type="checkbox"]')]
+}
+
+// ─── Modal appearance ─────────────────────────────────────────────────────────
+
+describe('PngExportModal — appears when Generate PNGs clicked', () => {
+  it('shows "⬇ Export PNGs" title after clicking Generate PNGs', async () => {
     render(<ReportBuilder report={makeReport()} {...baseProps} />)
     fireEvent.click(screen.getByText('⬇ Generate PNGs'))
-
-    await waitFor(() => expect(screen.getByText('💾 Name this PNG')).toBeInTheDocument())
-
-    // The mock generate() returns `${label}.png` = 'My Chart.png'
-    expect(getModalInput()).toHaveValue('My Chart.png')
+    await waitFor(() => expect(screen.getByText('⬇ Export PNGs')).toBeInTheDocument())
   })
 
-  it('Save button inside modal is disabled when input is empty', async () => {
+  it('pre-fills filename with [label]_[startDate]_to_[endDate].png', async () => {
     render(<ReportBuilder report={makeReport()} {...baseProps} />)
     fireEvent.click(screen.getByText('⬇ Generate PNGs'))
-
-    await waitFor(() => screen.getByText('💾 Name this PNG'))
-
-    fireEvent.change(getModalInput(), { target: { value: '' } })
-    expect(getModalSaveBtn()).toBeDisabled()
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
+    const inputs = getFilenameInputs()
+    expect(inputs).toHaveLength(1)
+    expect(inputs[0]).toHaveValue('My Chart_2026-01-01_to_2026-06-30.png')
   })
 
-  it('Save button inside modal is enabled when input has a value', async () => {
+  it('chart is checked by default', async () => {
     render(<ReportBuilder report={makeReport()} {...baseProps} />)
     fireEvent.click(screen.getByText('⬇ Generate PNGs'))
-
-    await waitFor(() => screen.getByText('💾 Name this PNG'))
-    expect(getModalSaveBtn()).not.toBeDisabled()
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
+    const checkboxes = getModalCheckboxes()
+    expect(checkboxes).toHaveLength(1)
+    expect(checkboxes[0]).toBeChecked()
   })
 
-  it('clicking modal Save closes the modal and proceeds to build ZIP', async () => {
+  it('shows Select all and Select none buttons', async () => {
     render(<ReportBuilder report={makeReport()} {...baseProps} />)
     fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
+    expect(screen.getByText('Select all')).toBeInTheDocument()
+    expect(screen.getByText('Select none')).toBeInTheDocument()
+  })
 
-    await waitFor(() => screen.getByText('💾 Name this PNG'))
-    fireEvent.click(getModalSaveBtn())
+  it('shows instance label as a read-only label next to the filename input', async () => {
+    render(<ReportBuilder report={makeReport()} {...baseProps} />)
+    fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
+    expect(screen.getByText('My Chart')).toBeInTheDocument()
+  })
+})
 
-    await waitFor(() => {
-      expect(screen.queryByText('💾 Name this PNG')).not.toBeInTheDocument()
+// ─── Multiple instances ────────────────────────────────────────────────────────
+
+describe('PngExportModal — multiple instances', () => {
+  function makeMultiReport() {
+    return makeReport({
+      instances: [
+        makeInstance({ id: 10, _tempId: 'tmp_1', label: 'Alpha' }),
+        makeInstance({ id: 11, _tempId: 'tmp_2', label: 'Beta'  }),
+        makeInstance({ id: 12, _tempId: 'tmp_3', label: 'Gamma' }),
+      ],
     })
+  }
 
-    // After the loop finishes, the generate button re-enables
-    await waitFor(() => {
-      expect(screen.getByText('⬇ Generate PNGs')).not.toBeDisabled()
-    }, { timeout: 3000 })
+  it('shows one filename input per instance', async () => {
+    render(<ReportBuilder report={makeMultiReport()} {...baseProps} />)
+    fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
+    expect(getFilenameInputs()).toHaveLength(3)
   })
 
-  it('pressing Enter saves with the current filename', async () => {
-    render(<ReportBuilder report={makeReport()} {...baseProps} />)
+  it('Select none unchecks all charts', async () => {
+    render(<ReportBuilder report={makeMultiReport()} {...baseProps} />)
     fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
 
-    await waitFor(() => screen.getByText('💾 Name this PNG'))
-
-    const input = getModalInput()
-    fireEvent.change(input, { target: { value: 'my-custom-name.png' } })
-    fireEvent.keyDown(input, { key: 'Enter' })
-
-    await waitFor(() => {
-      expect(screen.queryByText('💾 Name this PNG')).not.toBeInTheDocument()
-    })
+    fireEvent.click(screen.getByText('Select none'))
+    getModalCheckboxes().forEach(cb => expect(cb).not.toBeChecked())
   })
 
-  it('pressing Escape cancels the whole operation', async () => {
-    render(<ReportBuilder report={makeReport()} {...baseProps} />)
+  it('Select all re-checks all charts after Select none', async () => {
+    render(<ReportBuilder report={makeMultiReport()} {...baseProps} />)
     fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
 
-    await waitFor(() => screen.getByText('💾 Name this PNG'))
-
-    fireEvent.keyDown(getModalInput(), { key: 'Escape' })
-
-    await waitFor(() => {
-      expect(screen.queryByText('💾 Name this PNG')).not.toBeInTheDocument()
-    })
-
-    await waitFor(() => {
-      expect(screen.getByText('⬇ Generate PNGs')).not.toBeDisabled()
-    })
+    fireEvent.click(screen.getByText('Select none'))
+    fireEvent.click(screen.getByText('Select all'))
+    getModalCheckboxes().forEach(cb => expect(cb).toBeChecked())
   })
 
-  it('"Cancel all" button closes modal and aborts the generate loop', async () => {
+  it('individual checkbox toggles only that row', async () => {
+    render(<ReportBuilder report={makeMultiReport()} {...baseProps} />)
+    fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
+
+    const [cb1, cb2, cb3] = getModalCheckboxes()
+    fireEvent.click(cb2)
+    expect(cb1).toBeChecked()
+    expect(cb2).not.toBeChecked()
+    expect(cb3).toBeChecked()
+  })
+})
+
+// ─── Filename editing ─────────────────────────────────────────────────────────
+
+describe('PngExportModal — filename editing', () => {
+  it('filename input is editable', async () => {
     render(<ReportBuilder report={makeReport()} {...baseProps} />)
     fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
 
-    await waitFor(() => screen.getByText('💾 Name this PNG'))
-    fireEvent.click(getModalCancelBtn())
+    const input = getFilenameInputs()[0]
+    fireEvent.change(input, { target: { value: 'custom-name.png' } })
+    expect(input).toHaveValue('custom-name.png')
+  })
+})
 
-    await waitFor(() => {
-      expect(screen.queryByText('💾 Name this PNG')).not.toBeInTheDocument()
+// ─── Conflict detection ────────────────────────────────────────────────────────
+
+describe('PngExportModal — conflict detection', () => {
+  function makeTwoChartReport() {
+    return makeReport({
+      instances: [
+        makeInstance({ id: 10, _tempId: 'tmp_1', label: 'Alpha' }),
+        makeInstance({ id: 11, _tempId: 'tmp_2', label: 'Beta'  }),
+      ],
     })
+  }
 
-    await waitFor(() => {
-      expect(screen.getByText('⬇ Generate PNGs')).not.toBeDisabled()
-    })
+  it('no conflict warning when filenames are unique', async () => {
+    render(<ReportBuilder report={makeTwoChartReport()} {...baseProps} />)
+    fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
+    expect(screen.queryByText(/duplicate filenames/i)).not.toBeInTheDocument()
   })
 
-  it('clicking the backdrop (outside the card) cancels the operation', async () => {
+  it('conflict warning appears when two filenames are made identical', async () => {
+    render(<ReportBuilder report={makeTwoChartReport()} {...baseProps} />)
+    fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
+
+    const [input1, input2] = getFilenameInputs()
+    fireEvent.change(input1, { target: { value: 'same-name.png' } })
+    fireEvent.change(input2, { target: { value: 'same-name.png' } })
+
+    expect(screen.getByText(/duplicate filenames/i)).toBeInTheDocument()
+  })
+
+  it('conflict warning disappears when filenames are made unique again', async () => {
+    render(<ReportBuilder report={makeTwoChartReport()} {...baseProps} />)
+    fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
+
+    const [input1, input2] = getFilenameInputs()
+    fireEvent.change(input1, { target: { value: 'same-name.png' } })
+    fireEvent.change(input2, { target: { value: 'same-name.png' } })
+    expect(screen.getByText(/duplicate filenames/i)).toBeInTheDocument()
+
+    fireEvent.change(input2, { target: { value: 'different-name.png' } })
+    expect(screen.queryByText(/duplicate filenames/i)).not.toBeInTheDocument()
+  })
+
+  it('unchecking one of two conflicting charts removes the warning', async () => {
+    render(<ReportBuilder report={makeTwoChartReport()} {...baseProps} />)
+    fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
+
+    const [input1, input2] = getFilenameInputs()
+    fireEvent.change(input1, { target: { value: 'same-name.png' } })
+    fireEvent.change(input2, { target: { value: 'same-name.png' } })
+    expect(screen.getByText(/duplicate filenames/i)).toBeInTheDocument()
+
+    // Uncheck the second chart — conflict is now moot
+    const [, cb2] = getModalCheckboxes()
+    fireEvent.click(cb2)
+    expect(screen.queryByText(/duplicate filenames/i)).not.toBeInTheDocument()
+  })
+})
+
+// ─── Dismissal ────────────────────────────────────────────────────────────────
+
+describe('PngExportModal — dismissal without generating', () => {
+  it('Cancel button closes modal', async () => {
     render(<ReportBuilder report={makeReport()} {...baseProps} />)
     fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
 
-    await waitFor(() => screen.getByText('💾 Name this PNG'))
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByText('⬇ Export PNGs')).not.toBeInTheDocument())
+  })
+
+  it('Cancel does not trigger ZIP generation', async () => {
+    const { buildZipBytes } = await import('../../utils/zipBuilder.js')
+
+    render(<ReportBuilder report={makeReport()} {...baseProps} />)
+    fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByText('⬇ Export PNGs')).not.toBeInTheDocument())
+
+    // Small wait to ensure nothing fires asynchronously
+    await new Promise(r => setTimeout(r, 100))
+    expect(buildZipBytes).not.toHaveBeenCalled()
+  })
+
+  it('Escape key closes modal', async () => {
+    render(<ReportBuilder report={makeReport()} {...baseProps} />)
+    fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
 
     const backdrop = getBackdrop()
-    expect(backdrop).not.toBeNull()
+    fireEvent.keyDown(backdrop, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByText('⬇ Export PNGs')).not.toBeInTheDocument())
+  })
 
-    // Simulate a click where target === currentTarget (i.e., on the backdrop itself,
-    // not a child element). jsdom won't naturally set target this way for fireEvent,
-    // so we call the handler as it would run in the browser by using Object.defineProperty.
-    // Simpler approach: directly invoke the onClick as if target === currentTarget.
+  it('clicking the backdrop closes the modal', async () => {
+    render(<ReportBuilder report={makeReport()} {...baseProps} />)
+    fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
+
+    const backdrop = getBackdrop()
     const clickEvent = new MouseEvent('click', { bubbles: true })
-    Object.defineProperty(clickEvent, 'target', { value: backdrop })
+    Object.defineProperty(clickEvent, 'target',      { value: backdrop })
     Object.defineProperty(clickEvent, 'currentTarget', { value: backdrop })
     backdrop.dispatchEvent(clickEvent)
 
-    await waitFor(() => {
-      expect(screen.queryByText('💾 Name this PNG')).not.toBeInTheDocument()
-    })
-
-    await waitFor(() => {
-      expect(screen.getByText('⬇ Generate PNGs')).not.toBeDisabled()
-    })
+    await waitFor(() => expect(screen.queryByText('⬇ Export PNGs')).not.toBeInTheDocument())
   })
 })
 
-// ─── .png extension enforcement ──────────────────────────────────────────────
+// ─── OK confirms and triggers generation ──────────────────────────────────────
 
-describe('FilenameModal — .png extension enforcement', () => {
-  it('appends .png when user removes the extension before saving', async () => {
-    const { buildZipBytes } = await import('../../utils/zipBuilder.js')
-
+describe('PngExportModal — OK triggers generation', () => {
+  it('clicking OK closes the modal', async () => {
     render(<ReportBuilder report={makeReport()} {...baseProps} />)
     fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
 
-    await waitFor(() => screen.getByText('💾 Name this PNG'))
-
-    fireEvent.change(getModalInput(), { target: { value: 'my-chart' } })
-    fireEvent.click(getModalSaveBtn())
-
-    await waitFor(() => {
-      expect(buildZipBytes).toHaveBeenCalled()
-    }, { timeout: 3000 })
-
-    const callArg = buildZipBytes.mock.calls[0][0]
-    expect(callArg[0].name).toBe('my-chart.png')
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }))
+    await waitFor(() => expect(screen.queryByText('⬇ Export PNGs')).not.toBeInTheDocument())
   })
 
-  it('does not double-append .png when extension is already present', async () => {
+  it('clicking OK with one chart selected triggers ZIP generation', async () => {
     const { buildZipBytes } = await import('../../utils/zipBuilder.js')
 
     render(<ReportBuilder report={makeReport()} {...baseProps} />)
     fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
 
-    await waitFor(() => screen.getByText('💾 Name this PNG'))
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }))
 
-    fireEvent.change(getModalInput(), { target: { value: 'already-has-it.png' } })
-    fireEvent.click(getModalSaveBtn())
-
-    await waitFor(() => {
-      expect(buildZipBytes).toHaveBeenCalled()
-    }, { timeout: 3000 })
-
-    const callArg = buildZipBytes.mock.calls[0][0]
-    expect(callArg[0].name).toBe('already-has-it.png')
+    await waitFor(() => expect(buildZipBytes).toHaveBeenCalled(), { timeout: 5000 })
   })
 
-  it('extension check is case-insensitive — .PNG is not double-extended', async () => {
+  it('ZIP contains the filename set in the modal', async () => {
     const { buildZipBytes } = await import('../../utils/zipBuilder.js')
 
     render(<ReportBuilder report={makeReport()} {...baseProps} />)
     fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
 
-    await waitFor(() => screen.getByText('💾 Name this PNG'))
+    fireEvent.change(getFilenameInputs()[0], { target: { value: 'my-custom.png' } })
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }))
 
-    fireEvent.change(getModalInput(), { target: { value: 'UPPERCASE.PNG' } })
-    fireEvent.click(getModalSaveBtn())
+    await waitFor(() => expect(buildZipBytes).toHaveBeenCalled(), { timeout: 5000 })
+    expect(buildZipBytes.mock.calls[0][0][0].name).toBe('my-custom.png')
+  })
+
+  it('clicking OK with all charts deselected does not trigger ZIP', async () => {
+    const { buildZipBytes } = await import('../../utils/zipBuilder.js')
+
+    render(<ReportBuilder report={makeReport()} {...baseProps} />)
+    fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
+
+    fireEvent.click(screen.getByText('Select none'))
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }))
+    await waitFor(() => expect(screen.queryByText('⬇ Export PNGs')).not.toBeInTheDocument())
+
+    await new Promise(r => setTimeout(r, 100))
+    expect(buildZipBytes).not.toHaveBeenCalled()
+  })
+
+  it('only selected charts are included in the ZIP', async () => {
+    const { buildZipBytes } = await import('../../utils/zipBuilder.js')
+
+    const report = makeReport({
+      instances: [
+        makeInstance({ id: 10, _tempId: 'tmp_1', label: 'Alpha' }),
+        makeInstance({ id: 11, _tempId: 'tmp_2', label: 'Beta'  }),
+      ],
+    })
+
+    render(<ReportBuilder report={report} {...baseProps} />)
+    fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
+
+    // Uncheck Beta
+    const [, cb2] = getModalCheckboxes()
+    fireEvent.click(cb2)
+
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }))
+
+    await waitFor(() => expect(buildZipBytes).toHaveBeenCalled(), { timeout: 5000 })
+    // Only 1 file in the ZIP (Alpha only)
+    expect(buildZipBytes.mock.calls[0][0]).toHaveLength(1)
+    expect(buildZipBytes.mock.calls[0][0][0].name).toBe('Alpha_2026-01-01_to_2026-06-30.png')
+  })
+
+  it('status message updates to reflect completed generation', async () => {
+    render(<ReportBuilder report={makeReport()} {...baseProps} />)
+    fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }))
 
     await waitFor(() => {
-      expect(buildZipBytes).toHaveBeenCalled()
-    }, { timeout: 3000 })
-
-    const callArg = buildZipBytes.mock.calls[0][0]
-    // Should NOT become 'UPPERCASE.PNG.png'
-    expect(callArg[0].name).toBe('UPPERCASE.PNG')
+      expect(screen.getByText(/PNG.*downloaded/i)).toBeInTheDocument()
+    }, { timeout: 5000 })
   })
 })
 
-// ─── Toolbar Cancel while modal is open ───────────────────────────────────────
+// ─── buildDefaultFilename logic ───────────────────────────────────────────────
 
-describe('FilenameModal — toolbar Cancel while modal is open', () => {
-  it('toolbar Cancel dismisses the modal immediately without further user input', async () => {
+describe('PngExportModal — default filename format', () => {
+  it('uses YYYY-MM-DD_to_YYYY-MM-DD date range in the default name', async () => {
     render(<ReportBuilder report={makeReport()} {...baseProps} />)
     fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
 
-    await waitFor(() => screen.getByText('💾 Name this PNG'))
-
-    // Click the small ✕ Cancel button in the action bar (not the modal)
-    fireEvent.click(screen.getByText('✕ Cancel'))
-
-    await waitFor(() => {
-      expect(screen.queryByText('💾 Name this PNG')).not.toBeInTheDocument()
-    })
-
-    await waitFor(() => {
-      expect(screen.getByText('⬇ Generate PNGs')).not.toBeDisabled()
-    })
+    const input = getFilenameInputs()[0]
+    // Label is "My Chart", dates are 2026-01-01 to 2026-06-30
+    expect(input.value).toMatch(/2026-01-01_to_2026-06-30\.png$/)
   })
 
-  it('status shows (cancelling…) after toolbar Cancel', async () => {
-    render(<ReportBuilder report={makeReport()} {...baseProps} />)
-    fireEvent.click(screen.getByText('⬇ Generate PNGs'))
-
-    await waitFor(() => screen.getByText('💾 Name this PNG'))
-    fireEvent.click(screen.getByText('✕ Cancel'))
-
-    await waitFor(() => {
-      expect(screen.getByText(/cancelling/i)).toBeInTheDocument()
+  it('sanitises illegal filename characters in the label', async () => {
+    const report = makeReport({
+      instances: [makeInstance({ label: 'My/Chart:Name?' })],
     })
+    render(<ReportBuilder report={report} {...baseProps} />)
+    fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
+
+    const input = getFilenameInputs()[0]
+    // /  :  ? should all become _
+    expect(input.value).not.toMatch(/[/:?]/)
   })
 })
