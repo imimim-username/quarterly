@@ -917,11 +917,13 @@ Field group mappings for query overwrite:
 - `overwrite`: updates `name`, `description`; deletes all existing instances; re-inserts from bundle.
 - `create_new`: inserts with name suffixed `" (imported)"` if a conflict exists.
 - **Report-level `config` (theme):** if the bundle report has `config != null`, an `UPDATE reports SET config=?` is performed after the row is created/updated, restoring the theme.
-- **Instance query-id remapping:** before inserting instances, the backend builds a `name→localId` map from all current queries (including any just imported). For each instance, if `query_name` is present in the bundle and matches a local query by name, that local ID is used. Falls back to the numeric `query_id` for same-system / older bundles that lack `query_name`. Instances whose query cannot be resolved are silently skipped.
+- **Instance query-id remapping:** before inserting instances, the backend builds a `name→localId` map from all current queries (including any just imported). For each instance, if `query_name` is present in the bundle and matches a local query by name, that local ID is used. Falls back to the numeric `query_id` for same-system / older bundles that lack `query_name`. Instances whose query cannot be resolved are counted in `skippedInstances` and skipped. If `reportId` is somehow still `null` after action resolution (defensive guard), the entire report is skipped via `continue`.
 
 All operations in a single `db.transaction()`.
 
-Returns: `{ queries: [{name, action, id}], addressLabels: [{address, chain, action}], settings: [key], reports: [name] }`
+Returns: `{ queries: [{name, action, id}], addressLabels: [{address, chain, action}], settings: [key], reports: [{ name, skippedInstances }] }`
+
+`skippedInstances` is 0 for reports where all instances were transferred successfully, and > 0 when one or more instance queries couldn't be matched by name (e.g., importing cross-system without first importing the referenced queries).
 
 ---
 
@@ -1388,7 +1390,7 @@ Manages its own complete state — no state in App other than the four props abo
 5. `echartsSeriesList` maps series config to ECharts series objects using `palette` colors
 6. `<ECharts>` wrapper renders the chart
 
-**`mergeInputs`** (useMemo) — maps each dataset to the shape `mergeDatasets` expects, pre-filtering rows by `activeFilters`.
+**`mergeInputs`** (useMemo) — maps each dataset to the shape `mergeDatasets` expects, pre-filtering rows by `activeFilters` and by the chart's `startDate`/`endDate` range (numeric xField rows outside the range are dropped; rows whose xField cannot be parsed as a number are kept as-is — they may be string categories or nulls).
 
 **`palette`** (useMemo) — resolves `schemeId` against `colorSchemes` prop → falls back to `DEFAULT_PALETTE` (12 colors).
 
@@ -1398,7 +1400,7 @@ Manages its own complete state — no state in App other than the four props abo
 - `deleteConfig(name)` — removes entry by name
 - UI: "Save config" button (with inline name input), "Load config…" dropdown, "Delete…" dropdown
 
-**Controls strip (top):** dataset picker dropdown, Run All button (when >1 dataset), "+ Add Series", color scheme picker (when `colorSchemes.length > 0`), Connect nulls checkbox, Legend checkbox, save/load/delete UI.
+**Controls strip (top):** dataset picker dropdown, Run All button (when >1 dataset), "+ Add Series", color scheme picker (when `colorSchemes.length > 0`), Connect nulls checkbox, Legend checkbox, Scale L checkbox (toggles log scale on left Y-axis), Scale R checkbox (toggles log scale on right Y-axis), save/load/delete UI.
 
 **`DatasetRow`** sub-component: shows dataset name + status; X/groupBy/aggregation/yMode selectors; divisor buttons (accent-colored when active, cycling raw→÷1e6→÷1e18 on click); `<ResultFilters>` chip UI (appears after run, filters applied before merge).
 
@@ -1738,7 +1740,7 @@ Export tab state: `queryList`, `selectedQueryIds` (Set), `includeAddressLabels`,
 Import tab — 3 steps:
 1. File pick / drag-drop → parse JSON → validate `schemaVersion` → call `previewImport` → transition to step 2
 2. Preview with per-item decisions (dropdowns + field checkboxes) → "Import N items" → call `commitImport` → step 3
-3. Summary of results + Close button
+3. Summary of results + Close button. If any imported reports have `skippedInstances > 0`, a warning banner is shown listing those reports (name + count), with guidance: "Import those queries first, then re-import the report."
 
 ---
 
@@ -2186,7 +2188,7 @@ Run: `npm test --workspace=frontend`
 
 Config: `vitest.config.js` with `environment: 'jsdom'`, `setupFiles: ['@testing-library/jest-dom/vitest']`.
 
-**17 test files, 385 tests total (as of 2026-08-25):**
+**17 test files, 387 tests total (as of 2026-08-26):**
 
 | File | Tests | Coverage |
 |---|---|---|
@@ -2195,7 +2197,7 @@ Config: `vitest.config.js` with `environment: 'jsdom'`, `setupFiles: ['@testing-
 | `components/__tests__/ColorSchemeManager.test.jsx` | 32 | List rendering (swatches, default badge), set default, delete, create, edit (name/colors/theme), "Override chart appearance" checkbox behavior (opt-in, pre-checked for themed schemes, hides/shows pickers), save with and without theme, update scheme with and without theme |
 | `components/__tests__/ResultsView.test.jsx` | 22 | Renders table by default, chart tab switch (Chart button), `display:none` toggling (both children always mounted), props flow through (divisors, filters, save view), color scheme props forwarded to ResultsChart |
 | `components/__tests__/MultiQueryChart.test.jsx` | 25 | Initial render, query loading, add/remove datasets, run datasets (createRun args with start_date/end_date), auto-xField, series add/remove, chart controls, Run All, dataset config selectors. Mocks: `vi.mock('../../api/client.js')`, `vi.mock('echarts')`, `global.ResizeObserver` stub |
-| `components/__tests__/FilenameModal.test.jsx` | 30 | Original 13 tests for `ReportBuilder` integration: toolbar cancel, cancelling status, modal appearance, Save disabled/enabled, Save/Enter/Escape/Cancel all/backdrop click. Plus 17 new tests: `buildDefaultFilename` (date formatting, label sanitisation, fallbacks), `.png` extension enforcement on OK (missing extension appended, `.png` not doubled, `.PNG` case-insensitive), `PngExportModal` (select-all/none, per-item toggle, conflict detection highlights duplicates among checked items only, Escape works immediately on open). Mocks: `api/client.js`, `ReportThemeEditor.jsx`, `ReportInstanceCard.jsx` (exposes `generate()` via `useImperativeHandle`), `zipBuilder.js` |
+| `components/__tests__/FilenameModal.test.jsx` | 32 | Original 13 tests for `ReportBuilder` integration: toolbar cancel, cancelling status, modal appearance, Save disabled/enabled, Save/Enter/Escape/Cancel all/backdrop click. Plus 19 new tests: `buildDefaultFilename` (date formatting, label sanitisation, fallbacks, falls back to query name when label is empty, falls back to `'chart'` when both label and query name are empty), `.png` extension enforcement on OK (missing extension appended, `.png` not doubled, `.PNG` case-insensitive), `PngExportModal` (select-all/none, per-item toggle, conflict detection highlights duplicates among checked items only, Escape works immediately on open). Mocks: `api/client.js`, `ReportThemeEditor.jsx`, `ReportInstanceCard.jsx` (exposes `generate()` via `useImperativeHandle`), `zipBuilder.js` |
 | `utils/__tests__/computedColumns.test.js` | 115 | `parseFormula` (valid/invalid/empty), `applyComputedColumns` (no defs, arithmetic, divisors, zero, chaining, invalid formula, div-by-zero, prototype blocking), `computedFieldMeta`, custom parser operators |
 | `utils/__tests__/timestampExtraction.test.js` | 25 | `applyTimestampExtraction` (null config, before/after position, missing field, delimiter variants), `timestampExtractionMeta` |
 | `utils/__tests__/mergeDatasets.test.js` | 38 | Guard cases, aggregation (sum/avg/min/max/count/median), groupBy (day/week/month), cumulative, divisors, two-dataset union join, same-column collision prevention, type-compatible X alignment, three datasets, formatXLabel |
@@ -2208,7 +2210,7 @@ Config: `vitest.config.js` with `environment: 'jsdom'`, `setupFiles: ['@testing-
 | `utils/__tests__/chartDataUtils.test.js` | 56 | `buildChartData` edge cases: bucket collapsing, cumulative across grouped data, divisors, aggregation modes, empty series |
 | `utils/__tests__/zipBuilder.test.js` | 17 | `crc32` standard vectors (empty, single byte, hello world, 0xFF run), `buildZipBytes` structural correctness (signatures, local/central headers, EOCD, entry counts, offsets, UTF-8 filenames, multi-file) |
 
-**Grand total: 632 tests (385 frontend Vitest + 240 backend Jest passing + 7 skipped)**
+**Grand total: 634 tests (387 frontend Vitest + 240 backend Jest passing + 7 skipped)**
 
 Backend test counts: 11 test files, 247 total (240 passing + 7 skipped integration tests gated by `process.env.INTEGRATION`). The 7 skipped tests in `runs.test.js` / `ponder.test.js` require a live Ponder endpoint.
 
@@ -2241,8 +2243,6 @@ function renderModal(overrides = {}) {
 }
 ```
 The `PngExportModal` backdrop is auto-focused on mount, so Escape key tests work via `fireEvent.keyDown(backdrop, { key: 'Escape' })` without any prior click.
-
-**Promise stored in React state:** `setFilenamePrompt({ proposed, resolve })` stores the Promise resolver function as a property of a plain object — not as a top-level function argument to `setState`, so React never treats it as an updater function. This is safe.
 
 ---
 

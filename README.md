@@ -394,6 +394,8 @@ Settings show the incoming value alongside the current value so you can decide w
 
 The import runs in a single database transaction — all decisions are applied atomically.
 
+After import, a results summary is shown. If any imported reports contain charts whose queries couldn't be matched by name on this system (e.g. importing a report cross-system before importing its queries), a warning banner lists those reports and their skipped chart count. To fix: import the missing queries first, then re-import the report.
+
 ### Bundle format
 
 ```json
