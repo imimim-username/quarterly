@@ -243,6 +243,8 @@ export default function MultiQueryChart({ startDate, endDate, colorSchemes = [],
   // Chart options
   const [connectNulls, setConnectNulls] = useState(false)
   const [showLegend, setShowLegend]     = useState(true)
+  const [leftScaleY, setLeftScaleY]     = useState(false)
+  const [rightScaleY, setRightScaleY]   = useState(false)
 
   // Color scheme — null means use DEFAULT_PALETTE
   const [schemeId, setSchemeId] = useState(null)
@@ -277,6 +279,8 @@ export default function MultiQueryChart({ startDate, endDate, colorSchemes = [],
       seriesList,
       connectNulls,
       showLegend,
+      leftScaleY,
+      rightScaleY,
       schemeId,
     }
     const updated = [...savedConfigs.filter(c => c.name !== name), entry]
@@ -284,7 +288,7 @@ export default function MultiQueryChart({ startDate, endDate, colorSchemes = [],
     setSavedConfigs(updated)
     setSaveName('')
     setShowSaveInput(false)
-  }, [datasets, seriesList, connectNulls, showLegend, schemeId, saveName, savedConfigs])
+  }, [datasets, seriesList, connectNulls, showLegend, leftScaleY, rightScaleY, schemeId, saveName, savedConfigs])
 
   const loadConfig = useCallback((name) => {
     const config = savedConfigs.find(c => c.name === name)
@@ -302,6 +306,8 @@ export default function MultiQueryChart({ startDate, endDate, colorSchemes = [],
     setSeriesList(config.seriesList || [])
     setConnectNulls(config.connectNulls ?? false)
     setShowLegend(config.showLegend ?? true)
+    setLeftScaleY(config.leftScaleY ?? false)
+    setRightScaleY(config.rightScaleY ?? false)
     setSchemeId(config.schemeId ?? null)
   }, [savedConfigs])
 
@@ -414,6 +420,27 @@ export default function MultiQueryChart({ startDate, endDate, colorSchemes = [],
       rows = rows.filter(row => filterEntries.every(([f, vals]) => vals.includes(String(row[f]))))
     }
 
+    // Apply date range filtering on the xField when it carries a numeric timestamp.
+    // This makes the chart respect the global date pickers on already-fetched data,
+    // not just on re-runs.
+    const xField = ds.xField || ''
+    if ((startDate || endDate) && xField && rows.length > 0) {
+      const sample = Number(rows[0][xField])
+      if (!isNaN(sample) && sample > 0) {
+        // Detect unix-ms (> 1e11 ≈ year 1973 in ms) vs unix-seconds
+        const toSec = sample > 1e11 ? v => v / 1000 : v => v
+        const startSec = startDate ? startDate.getTime() / 1000 : null
+        const endSec   = endDate   ? endDate.getTime()   / 1000 : null
+        rows = rows.filter(row => {
+          const v = toSec(Number(row[xField]))
+          if (isNaN(v)) return true
+          if (startSec != null && v < startSec) return false
+          if (endSec   != null && v > endSec)   return false
+          return true
+        })
+      }
+    }
+
     const dsYFields = seriesList
       .filter(s => s.datasetIdx === idx && s.field)
       .map(s => s.field)
@@ -422,14 +449,14 @@ export default function MultiQueryChart({ startDate, endDate, colorSchemes = [],
     return {
       id: ds.id,
       rows,
-      xField: ds.xField || '',
+      xField,
       yFields: dsYFields,
       colDivisors: ds.colDivisors || {},
       groupBy: ds.groupBy || 'day',
       aggregation: ds.aggregation || 'sum',
       yMode: ds.yMode || 'raw',
     }
-  }), [datasets, seriesList])
+  }), [datasets, seriesList, startDate, endDate])
 
   const { xKeys, rows: mergedRows } = useMemo(() => {
     if (!seriesList.some(s => s.field) || !datasets.some(d => d.rows?.length > 0)) {
@@ -495,14 +522,14 @@ export default function MultiQueryChart({ startDate, endDate, colorSchemes = [],
         boundaryGap: echartsSeriesList.some(s => s.type === 'bar'),
       },
       yAxis: [
-        { type: 'value', axisLabel: { fontSize: 11, formatter: fmtAxisVal }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.07)' } } },
+        { type: 'value', scale: leftScaleY, axisLabel: { fontSize: 11, formatter: fmtAxisVal }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.07)' } } },
         hasRight
-          ? { type: 'value', axisLabel: { fontSize: 11, formatter: fmtAxisVal }, splitLine: { show: false } }
+          ? { type: 'value', scale: rightScaleY, axisLabel: { fontSize: 11, formatter: fmtAxisVal }, splitLine: { show: false } }
           : { show: false },
       ],
       series: echartsSeriesList,
     }
-  }, [echartsSeriesList, xLabels, showLegend, seriesList])
+  }, [echartsSeriesList, xLabels, showLegend, seriesList, leftScaleY, rightScaleY])
 
   const datasetColumns = useCallback(ds => {
     if (ds.rows?.length > 0) return Object.keys(ds.rows[0])
@@ -543,6 +570,16 @@ export default function MultiQueryChart({ startDate, endDate, colorSchemes = [],
         )}
 
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center' }}>
+          <label style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
+            title="Scale left Y axis to data range instead of starting at zero">
+            <input type="checkbox" checked={leftScaleY} onChange={e => setLeftScaleY(e.target.checked)} />
+            Scale L
+          </label>
+          <label style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
+            title="Scale right Y axis to data range instead of starting at zero">
+            <input type="checkbox" checked={rightScaleY} onChange={e => setRightScaleY(e.target.checked)} />
+            Scale R
+          </label>
           <label style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
             <input type="checkbox" checked={connectNulls} onChange={e => setConnectNulls(e.target.checked)} />
             Connect nulls
