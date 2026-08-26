@@ -454,6 +454,32 @@ describe('PngExportModal — default filename format', () => {
     // /  :  ? should all become _
     expect(input.value).not.toMatch(/[/:?]/)
   })
+
+  it('falls back to "chart" when both label and query name are empty', async () => {
+    const report = makeReport({
+      // label is empty and query has no name → should fall all the way back to 'chart'
+      instances: [makeInstance({ label: '', query: { id: 1, name: '', category: '' } })],
+    })
+    render(<ReportBuilder report={report} {...baseProps} />)
+    fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
+
+    const input = getFilenameInputs()[0]
+    expect(input.value).toMatch(/^chart_/)
+  })
+
+  it('falls back to query name when label is empty but query name is set', async () => {
+    const report = makeReport({
+      instances: [makeInstance({ label: '', query: { id: 1, name: 'My Query', category: 'Test' } })],
+    })
+    render(<ReportBuilder report={report} {...baseProps} />)
+    fireEvent.click(screen.getByText('⬇ Generate PNGs'))
+    await waitFor(() => screen.getByText('⬇ Export PNGs'))
+
+    const input = getFilenameInputs()[0]
+    // Falls back to inst.query.name when label is empty
+    expect(input.value).toMatch(/^My Query_/)
+  })
 })
 
 // ─── .png extension enforcement ──────────────────────────────────────────────

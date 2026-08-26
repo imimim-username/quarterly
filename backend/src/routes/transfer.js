@@ -344,6 +344,9 @@ module.exports = function transferRoutes(db) {
         const localQueryIdByName = {};
         db.prepare('SELECT id, name FROM queries').all().forEach(q => { localQueryIdByName[q.name] = q.id; });
 
+        // Tracks per-report counts of instances skipped due to unresolvable query IDs.
+        const reportSkipped = {};
+
         for (const decision of reportDecisions) {
           if (decision.action === 'skip') continue;
           const bundleReport = bundleReports.find(r => r.name === decision.name);
@@ -373,6 +376,10 @@ module.exports = function transferRoutes(db) {
             reportId = info.lastInsertRowid;
           }
 
+          // Defensive guard: if neither overwrite nor create_new set reportId
+          // (e.g. an unrecognised action string), skip this report entirely.
+          if (reportId == null) continue;
+
           // Restore report-level config (theme) if present in bundle
           if (bundleReport.config != null) {
             db.prepare('UPDATE reports SET config=? WHERE id=?')
@@ -384,6 +391,7 @@ module.exports = function transferRoutes(db) {
           const insertInst = db.prepare(
             'INSERT INTO report_instances (report_id, query_id, position, label, config, created_at) VALUES (?,?,?,?,?,?)'
           );
+          let skippedInstances = 0;
           for (const inst of (bundleReport.instances || [])) {
             let localQueryId = null;
             if (inst.query_name != null && localQueryIdByName[inst.query_name] != null) {
@@ -392,9 +400,14 @@ module.exports = function transferRoutes(db) {
               const q = db.prepare('SELECT id FROM queries WHERE id = ?').get(inst.query_id);
               localQueryId = q ? q.id : null;
             }
-            if (localQueryId == null) continue; // query not found in this DB — skip
+            if (localQueryId == null) {
+              // Query not found in this DB (cross-system import missing query) — skip
+              skippedInstances++;
+              continue;
+            }
             insertInst.run(reportId, localQueryId, inst.position ?? 0, inst.label ?? '', JSON.stringify(inst.config ?? {}), now);
           }
+          reportSkipped[bundleReport.name] = skippedInstances;
         }
 
         // ── Settings ──
@@ -414,7 +427,15 @@ module.exports = function transferRoutes(db) {
         queries: queryResults,
         addressLabels: labelResults,
         settings: settingResults,
-        reports: (decisions.reports || []).filter(d => d.action !== 'skip').map(d => d.name),
+        // reports: array of { name, skippedInstances } for each non-skipped report.
+        // skippedInstances > 0 means some instances were dropped because their
+        // referenced query doesn't exist on this system.
+        reports: (decisions.reports || [])
+          .filter(d => d.action !== 'skip')
+          .map(d => ({
+            name: d.name,
+            skippedInstances: reportSkipped[d.name] ?? 0,
+          })),
       });
     } catch (e) {
       serverError(res, e, 'import_failed');

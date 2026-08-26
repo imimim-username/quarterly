@@ -361,7 +361,12 @@ function ImportTab() {
     const lUpdated  = (r.addressLabels || []).filter(x => x.action === 'updated').length
     const lSkipped  = (r.addressLabels || []).filter(x => x.action === 'skipped').length
     const sImported = (r.settings || []).length
-    const rImported = (r.reports || []).length
+    // r.reports is [{ name, skippedInstances }]
+    const rReports  = r.reports || []
+    const rImported = rReports.length
+    const rSkippedInstTotal = rReports.reduce((sum, rr) => sum + (rr.skippedInstances || 0), 0)
+    // Reports with at least one skipped instance (query not found on this system)
+    const rWithSkipped = rReports.filter(rr => (rr.skippedInstances || 0) > 0)
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -389,11 +394,22 @@ function ImportTab() {
             {rImported > 0 && (
               <tr>
                 <td style={{ color: 'var(--color-text-muted)' }}>Reports</td>
-                <td>{rImported} imported</td>
+                <td>{rImported} imported{rSkippedInstTotal > 0 ? ` (${rSkippedInstTotal} chart${rSkippedInstTotal !== 1 ? 's' : ''} skipped — query not found)` : ''}</td>
               </tr>
             )}
           </tbody>
         </table>
+        {rWithSkipped.length > 0 && (
+          <div style={{ background: 'rgba(255,152,0,0.12)', border: '1px solid var(--color-warning)', borderRadius: 4, padding: '8px 12px', fontSize: 12 }}>
+            <strong>⚠ Some charts could not be imported</strong> because their queries don't exist on this system:
+            <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
+              {rWithSkipped.map(rr => (
+                <li key={rr.name}><em>{rr.name}</em>: {rr.skippedInstances} chart{rr.skippedInstances !== 1 ? 's' : ''} skipped</li>
+              ))}
+            </ul>
+            Import those queries first, then re-import the report.
+          </div>
+        )}
         <div>
           <button onClick={() => { setStep('pick'); setBundle(null); setPreview(null); setImportResult(null) }}>
             Import another file

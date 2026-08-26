@@ -433,6 +433,8 @@ export default function MultiQueryChart({ startDate, endDate, colorSchemes = [],
         const endSec   = endDate   ? endDate.getTime()   / 1000 : null
         rows = rows.filter(row => {
           const v = toSec(Number(row[xField]))
+          // Rows whose xField can't be parsed as a number are intentionally kept —
+          // they may be string categories or null values that shouldn't be dropped.
           if (isNaN(v)) return true
           if (startSec != null && v < startSec) return false
           if (endSec   != null && v > endSec)   return false
